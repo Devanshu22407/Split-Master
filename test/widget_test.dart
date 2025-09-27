@@ -28,9 +28,7 @@ void main() {
           ),
         ],
         builder: (BuildContext context, Widget? child) {
-          return MaterialApp(
-            home: const AuthWrapper(),
-          );
+          return MaterialApp(home: const AuthWrapper());
         },
       ),
     );

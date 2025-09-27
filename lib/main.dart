@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'all_expenses_screen.dart';
+import 'profile_screen.dart';
+import 'professional_settings_screen.dart';
 
 // --- Data Models ---
 
@@ -163,14 +166,25 @@ class AuthManager extends ChangeNotifier {
   }
 
   void login(String email, String password) {
+    // Input validation
+    if (email.isEmpty || password.isEmpty) {
+      throw Exception('Email and password are required');
+    }
+    
+    // Email format validation
+    final emailRegExp = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegExp.hasMatch(email.trim())) {
+      throw Exception('Please enter a valid email address');
+    }
+    
     // Simulate authentication logic
-    if (email == 'user@example.com' && password == _dummyPassword) {
+    if (email.trim() == 'user@example.com' && password == _dummyPassword) {
       _isAuthenticated = true;
       _currentUser = AppUser(
         id: 'user_1',
         name: 'John Doe',
         username: 'johndoe',
-        email: email,
+        email: email.trim(),
         dob: null,
         country: null,
         gender: null,
@@ -180,19 +194,51 @@ class AuthManager extends ChangeNotifier {
       );
       notifyListeners();
     } else {
-      // In a real app, you'd throw an error or show a message
-      debugPrint('Login failed: Invalid credentials');
+      throw Exception('Invalid email or password');
     }
   }
 
   void signup(String name, String email, String password) {
+    // Input validation
+    if (name.isEmpty || email.isEmpty || password.isEmpty) {
+      throw Exception('All fields are required');
+    }
+    
+    // Name validation
+    if (name.trim().length < 2) {
+      throw Exception('Name must be at least 2 characters long');
+    }
+    
+    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(name.trim())) {
+      throw Exception('Name can only contain letters and spaces');
+    }
+    
+    // Email format validation
+    final emailRegExp = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegExp.hasMatch(email.trim())) {
+      throw Exception('Please enter a valid email address');
+    }
+    
+    // Password validation
+    if (password.length < 8) {
+      throw Exception('Password must be at least 8 characters long');
+    }
+    
+    if (!RegExp(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)').hasMatch(password)) {
+      throw Exception('Password must contain at least one uppercase letter, one lowercase letter, and one number');
+    }
+    
+    if (password.contains(' ')) {
+      throw Exception('Password cannot contain spaces');
+    }
+    
     // Simulate signup logic
     _isAuthenticated = true;
     _currentUser = AppUser(
       id: 'user_${DateTime.now().millisecondsSinceEpoch}',
-      name: name,
-      username: name, // Use the provided 'name' as the 'username'
-      email: email,
+      name: name.trim(),
+      username: name.trim().toLowerCase().replaceAll(' ', ''),
+      email: email.trim(),
       dob: null,
       country: null,
       gender: null,
@@ -200,7 +246,7 @@ class AuthManager extends ChangeNotifier {
       profileImageUrl:
           'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg',
     );
-    _dummyPassword = password; // Set the new dummy password
+    _dummyPassword = password; // Set the new password
     notifyListeners();
   }
 
@@ -215,13 +261,38 @@ class AuthManager extends ChangeNotifier {
     if (_currentUser == null) {
       return 'No user logged in to change password.';
     }
+    
+    // Validate current password
+    if (currentPassword.isEmpty) {
+      return 'Current password is required.';
+    }
+    
     if (currentPassword != _dummyPassword) {
-      return 'Current password incorrect.';
+      return 'Current password is incorrect.';
     }
-    if (newPassword.length < 6) {
-      // Simple validation for new password length
-      return 'New password too short (min 6 characters).';
+    
+    // Validate new password
+    if (newPassword.isEmpty) {
+      return 'New password is required.';
     }
+    
+    if (newPassword.length < 8) {
+      return 'New password must be at least 8 characters long.';
+    }
+    
+    if (!RegExp(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)').hasMatch(newPassword)) {
+      return 'New password must contain at least one uppercase letter, one lowercase letter, and one number.';
+    }
+    
+    if (newPassword.contains(' ')) {
+      return 'New password cannot contain spaces.';
+    }
+    
+    if (currentPassword == newPassword) {
+      return 'New password must be different from current password.';
+    }
+    
+    // Update password
     _dummyPassword = newPassword;
     debugPrint('Password changed successfully for ${_currentUser!.email}');
     notifyListeners();
@@ -255,7 +326,7 @@ class AuthManager extends ChangeNotifier {
 }
 
 class AppConfig extends ChangeNotifier {
-  ThemeMode _themeMode = ThemeMode.dark; // Changed default to dark
+  ThemeMode _themeMode = ThemeMode.light; // Default to light theme for professional look
 
   ThemeMode get themeMode => _themeMode;
 
@@ -669,27 +740,248 @@ void main() {
           title: 'SplitMaster',
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.indigo,
+              seedColor: const Color(0xFF2563EB), // Professional blue
               brightness: Brightness.light,
+              primary: const Color(0xFF2563EB),
+              secondary: const Color(0xFF10B981), // Professional green
+              surface: const Color(0xFFF8FAFC),
+              background: const Color(0xFFF1F5F9),
+              error: const Color(0xFFEF4444),
             ),
             useMaterial3: true,
-            textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme),
-            appBarTheme: const AppBarTheme(
+            textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme).copyWith(
+              headlineLarge: GoogleFonts.inter(
+                fontSize: 32,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF1E293B),
+              ),
+              headlineMedium: GoogleFonts.inter(
+                fontSize: 28,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1E293B),
+              ),
+              headlineSmall: GoogleFonts.inter(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1E293B),
+              ),
+              titleLarge: GoogleFonts.inter(
+                fontSize: 22,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF334155),
+              ),
+              titleMedium: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF475569),
+              ),
+              bodyLarge: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFF64748B),
+              ),
+              bodyMedium: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFF64748B),
+              ),
+            ),
+            appBarTheme: AppBarTheme(
               elevation: 0,
               centerTitle: true,
+              backgroundColor: const Color(0xFFFAFAFA),
+              foregroundColor: const Color(0xFF1E293B),
+              titleTextStyle: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1E293B),
+              ),
+              iconTheme: const IconThemeData(
+                color: Color(0xFF1E293B),
+                size: 24,
+              ),
+            ),
+            cardTheme: CardThemeData(
+              elevation: 2,
+              shadowColor: Colors.black.withOpacity(0.08),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              color: Colors.white,
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                textStyle: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            inputDecorationTheme: InputDecorationTheme(
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFF2563EB), width: 2),
+              ),
+              labelStyle: GoogleFonts.inter(
+                color: const Color(0xFF64748B),
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
           darkTheme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.indigo,
+              seedColor: const Color(0xFF60A5FA), // Brighter, more visible blue
               brightness: Brightness.dark,
+              primary: const Color(0xFF60A5FA), // More vibrant blue
+              secondary: const Color(0xFF4ADE80), // Brighter green
+              surface: const Color(0xFF1F2937), // Lighter gray for better contrast
+              background: const Color(0xFF111827), // Deeper background
+              error: const Color(0xFFF87171), // Softer red
+              onPrimary: const Color(0xFF000000), // Black text on primary
+              onSecondary: const Color(0xFF000000), // Black text on secondary
+              onSurface: const Color(0xFFF9FAFB), // Very light text
+              onBackground: const Color(0xFFF3F4F6), // Light text on background
+              onError: const Color(0xFF000000), // Black text on error
+              outline: const Color(0xFF6B7280), // Medium gray for borders
+              surfaceVariant: const Color(0xFF374151), // Mid-gray surfaces
+              onSurfaceVariant: const Color(0xFFD1D5DB), // Light gray text
+              primaryContainer: const Color(0xFF1E40AF), // Darker blue container
+              onPrimaryContainer: const Color(0xFFDBEAFE), // Very light blue text
+              secondaryContainer: const Color(0xFF166534), // Darker green container
+              onSecondaryContainer: const Color(0xFFDCFCE7), // Very light green text
             ),
             useMaterial3: true,
-            textTheme:
-                GoogleFonts.interTextTheme(Theme.of(context).primaryTextTheme),
-            appBarTheme: const AppBarTheme(
+            textTheme: GoogleFonts.interTextTheme(Theme.of(context).primaryTextTheme).copyWith(
+              headlineLarge: GoogleFonts.inter(
+                fontSize: 32,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFFF9FAFB), // Almost white
+              ),
+              headlineMedium: GoogleFonts.inter(
+                fontSize: 28,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFFF9FAFB), // Almost white
+              ),
+              headlineSmall: GoogleFonts.inter(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFFF3F4F6), // Light gray
+              ),
+              titleLarge: GoogleFonts.inter(
+                fontSize: 22,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFFE5E7EB), // Medium-light gray
+              ),
+              titleMedium: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFFD1D5DB), // Medium gray
+              ),
+              bodyLarge: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFFD1D5DB), // Medium gray for readability
+              ),
+              bodyMedium: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: const Color(0xFFD1D5DB), // Medium gray for readability
+              ),
+            ),
+            appBarTheme: AppBarTheme(
               elevation: 0,
               centerTitle: true,
+              backgroundColor: const Color(0xFF1F2937), // Matches surface
+              foregroundColor: const Color(0xFFF9FAFB), // Almost white
+              titleTextStyle: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFFF9FAFB), // Almost white
+              ),
+              iconTheme: const IconThemeData(
+                color: Color(0xFFF9FAFB), // Almost white
+                size: 24,
+              ),
+            ),
+            cardTheme: CardThemeData(
+              elevation: 8, // Increased for better depth
+              shadowColor: Colors.black.withOpacity(0.5), // Stronger shadow
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              color: const Color(0xFF1F2937), // Lighter than background
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: ElevatedButton.styleFrom(
+                elevation: 2,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                textStyle: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                backgroundColor: const Color(0xFF60A5FA), // Bright blue
+                foregroundColor: const Color(0xFF000000), // Black text for contrast
+              ),
+            ),
+            inputDecorationTheme: InputDecorationTheme(
+              filled: true,
+              fillColor: const Color(0xFF374151), // Medium gray
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFF6B7280)), // Medium border
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFF6B7280)), // Medium border
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFF60A5FA), width: 2), // Bright blue
+              ),
+              labelStyle: GoogleFonts.inter(
+                color: const Color(0xFFD1D5DB), // Light gray
+                fontWeight: FontWeight.w500,
+              ),
+              hintStyle: GoogleFonts.inter(
+                color: const Color(0xFF9CA3AF), // Medium gray
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+            switchTheme: SwitchThemeData(
+              thumbColor: MaterialStateProperty.resolveWith((states) {
+                if (states.contains(MaterialState.selected)) {
+                  return const Color(0xFF60A5FA); // Bright blue when selected
+                }
+                return const Color(0xFF6B7280); // Gray when unselected
+              }),
+              trackColor: MaterialStateProperty.resolveWith((states) {
+                if (states.contains(MaterialState.selected)) {
+                  return const Color(0xFF1E40AF); // Dark blue track when selected
+                }
+                return const Color(0xFF374151); // Dark gray track when unselected
+              }),
+            ),
+            iconTheme: const IconThemeData(
+              color: Color(0xFFD1D5DB), // Light gray for icons
+              size: 24,
             ),
           ),
           themeMode: appConfig.themeMode,
@@ -725,111 +1017,405 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
   bool _isLogin = true;
+  bool _isPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
   void _authenticate() {
-    final AuthManager authManager = Provider.of<AuthManager>(context, listen: false);
-    if (_isLogin) {
-      authManager.login(_emailController.text, _passwordController.text);
-    } else {
-      authManager.signup(
-          _nameController.text, _emailController.text, _passwordController.text);
+    if (!_formKey.currentState!.validate()) {
+      return;
     }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final AuthManager authManager = Provider.of<AuthManager>(context, listen: false);
+    
+    try {
+      if (_isLogin) {
+        authManager.login(_emailController.text.trim(), _passwordController.text);
+      } else {
+        authManager.signup(
+            _nameController.text.trim(), 
+            _emailController.text.trim(), 
+            _passwordController.text
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Authentication failed: ${e.toString()}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  // Email validation function
+  String? _validateEmail(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Email is required';
+    }
+    
+    final emailRegExp = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegExp.hasMatch(value.trim())) {
+      return 'Enter a valid email address';
+    }
+    
+    return null;
+  }
+
+  // Password validation function
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Password is required';
+    }
+    
+    if (value.length < 8) {
+      return 'Password must be at least 8 characters long';
+    }
+    
+    if (!RegExp(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)').hasMatch(value)) {
+      return 'Password must contain at least one uppercase letter, one lowercase letter, and one number';
+    }
+    
+    return null;
+  }
+
+  // Name validation function
+  String? _validateName(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Name is required';
+    }
+    
+    if (value.trim().length < 2) {
+      return 'Name must be at least 2 characters long';
+    }
+    
+    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(value.trim())) {
+      return 'Name can only contain letters and spaces';
+    }
+    
+    return null;
+  }
+
+  // Confirm password validation function
+  String? _validateConfirmPassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please confirm your password';
+    }
+    
+    if (value != _passwordController.text) {
+      return 'Passwords do not match';
+    }
+    
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(_isLogin ? 'Login' : 'Sign Up')),
+      appBar: AppBar(
+        title: Text(_isLogin ? 'Login' : 'Sign Up'),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+      ),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment:
-                CrossAxisAlignment.center, // Ensure content is horizontally centered
-            children: <Widget>[
-              Icon(Icons.account_balance_wallet,
-                  size: 80, color: Theme.of(context).colorScheme.primary),
-              const SizedBox(height: 24),
-              Text(
-                'Welcome to SplitMaster',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-              const SizedBox(height: 32),
-              if (!_isLogin) ...<Widget>[
-                TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Name',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.person),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  keyboardType: TextInputType.name,
+                  child: Icon(
+                    Icons.account_balance_wallet,
+                    size: 60,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Welcome to SplitMaster',
+                  style: GoogleFonts.inter(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _isLogin ? 'Sign in to your account' : 'Create your account',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                
+                // Name field for signup
+                if (!_isLogin) ...<Widget>[
+                  TextFormField(
+                    controller: _nameController,
+                    decoration: InputDecoration(
+                      labelText: 'Full Name',
+                      hintText: 'Enter your full name',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      prefixIcon: const Icon(Icons.person_outline),
+                    ),
+                    keyboardType: TextInputType.name,
+                    textCapitalization: TextCapitalization.words,
+                    validator: _validateName,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                
+                // Email field
+                TextFormField(
+                  controller: _emailController,
+                  decoration: InputDecoration(
+                    labelText: 'Email Address',
+                    hintText: 'Enter your email',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    prefixIcon: const Icon(Icons.email_outlined),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: _validateEmail,
+                  textInputAction: TextInputAction.next,
                 ),
                 const SizedBox(height: 16),
-              ],
-              TextField(
-                controller: _emailController,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email),
+                
+                // Password field
+                TextFormField(
+                  controller: _passwordController,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    hintText: _isLogin ? 'Enter your password' : 'Create a strong password',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    suffixIcon: IconButton(
+                      onPressed: () {
+                        setState(() {
+                          _isPasswordVisible = !_isPasswordVisible;
+                        });
+                      },
+                      icon: Icon(
+                        _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                      ),
+                    ),
+                  ),
+                  obscureText: !_isPasswordVisible,
+                  validator: _isLogin ? (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Password is required';
+                    }
+                    return null;
+                  } : _validatePassword,
+                  textInputAction: _isLogin ? TextInputAction.done : TextInputAction.next,
                 ),
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.lock),
+                
+                // Confirm password field for signup
+                if (!_isLogin) ...<Widget>[
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _confirmPasswordController,
+                    decoration: InputDecoration(
+                      labelText: 'Confirm Password',
+                      hintText: 'Re-enter your password',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
+                          });
+                        },
+                        icon: Icon(
+                          _isConfirmPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                        ),
+                      ),
+                    ),
+                    obscureText: !_isConfirmPasswordVisible,
+                    validator: _validateConfirmPassword,
+                    textInputAction: TextInputAction.done,
+                  ),
+                ],
+                
+                // Password requirements for signup
+                if (!_isLogin) ...<Widget>[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Password Requirements:',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _buildPasswordRequirement('At least 8 characters'),
+                        _buildPasswordRequirement('One uppercase letter (A-Z)'),
+                        _buildPasswordRequirement('One lowercase letter (a-z)'),
+                        _buildPasswordRequirement('One number (0-9)'),
+                      ],
+                    ),
+                  ),
+                ],
+                
+                const SizedBox(height: 32),
+                
+                // Login/Signup button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _authenticate,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 2,
+                    ),
+                    child: _isLoading
+                        ? SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.onPrimary,
+                              ),
+                            ),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(_isLogin ? Icons.login : Icons.app_registration),
+                              const SizedBox(width: 8),
+                              Text(
+                                _isLogin ? 'Login' : 'Sign Up',
+                                style: GoogleFonts.inter(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
                 ),
-                obscureText: true,
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _authenticate,
-                  icon: Icon(_isLogin ? Icons.login : Icons.app_registration),
-                  label: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12.0),
-                    child: Text(
-                      _isLogin ? 'Login' : 'Sign Up',
-                      style: const TextStyle(fontSize: 18),
+                const SizedBox(height: 24),
+                
+                // Toggle between login and signup
+                TextButton(
+                  onPressed: _isLoading ? null : () {
+                    setState(() {
+                      _isLogin = !_isLogin;
+                      // Clear form when switching
+                      _emailController.clear();
+                      _passwordController.clear();
+                      _nameController.clear();
+                      _confirmPasswordController.clear();
+                      _formKey.currentState?.reset();
+                    });
+                  },
+                  child: RichText(
+                    text: TextSpan(
+                      text: _isLogin
+                          ? 'Don\'t have an account? '
+                          : 'Already have an account? ',
+                      style: GoogleFonts.inter(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      children: [
+                        TextSpan(
+                          text: _isLogin ? 'Sign Up' : 'Login',
+                          style: GoogleFonts.inter(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _isLogin = !_isLogin;
-                  });
-                },
-                child: Text(_isLogin
-                    ? 'Don\'t have an account? Sign Up'
-                    : 'Already have an account? Login'),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPasswordRequirement(String requirement) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(
+            Icons.check_circle_outline,
+            size: 16,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            requirement,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -886,7 +1472,7 @@ class _MainAppShellState extends State<MainAppShell> {
               _selectedIndex = 0; // Update bottom nav bar
             });
           }),
-          const SettingsPage(),
+          const ProfileScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -909,9 +1495,9 @@ class _MainAppShellState extends State<MainAppShell> {
             label: 'Add',
           ),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Profile',
           ),
         ],
       ),
@@ -938,9 +1524,144 @@ class HomeScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  'Welcome, ${authManager.currentUser?.username ?? 'Guest'}!',
-                  style: Theme.of(context).textTheme.headlineSmall,
+                // Professional Welcome Header
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: Theme.of(context).brightness == Brightness.dark
+                          ? [
+                              const Color(0xFF4F46E5), // Professional indigo
+                              const Color(0xFF7C3AED), // Professional purple
+                            ]
+                          : [
+                              const Color(0xFFE0E7FF), // Very light indigo
+                              const Color(0xFFF3F4F6), // Light gray
+                            ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Theme.of(context).brightness == Brightness.light
+                        ? Border.all(
+                            color: const Color(0xFF4F46E5).withOpacity(0.1),
+                            width: 1.5,
+                          )
+                        : null,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Theme.of(context).brightness == Brightness.dark
+                            ? const Color(0xFF4F46E5).withOpacity(0.2)
+                            : const Color(0xFF4F46E5).withOpacity(0.08),
+                        offset: const Offset(0, 8),
+                        blurRadius: 24,
+                        spreadRadius: 0,
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        offset: const Offset(0, 2),
+                        blurRadius: 4,
+                        spreadRadius: 0,
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(24),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(24),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<Widget>(
+                            builder: (context) => const ProfileScreen(),
+                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).brightness == Brightness.dark
+                                    ? Colors.white.withOpacity(0.15)
+                                    : const Color(0xFF4F46E5).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: Theme.of(context).brightness == Brightness.dark
+                                      ? Colors.white.withOpacity(0.2)
+                                      : const Color(0xFF4F46E5).withOpacity(0.15),
+                                  width: 2,
+                                ),
+                              ),
+                              child: CircleAvatar(
+                                radius: 28,
+                                backgroundColor: Theme.of(context).brightness == Brightness.dark
+                                    ? Colors.white.withOpacity(0.1)
+                                    : const Color(0xFF4F46E5).withOpacity(0.1),
+                                child: Text(
+                                  (authManager.currentUser?.username ?? 'G').substring(0, 1).toUpperCase(),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w700,
+                                    color: Theme.of(context).brightness == Brightness.dark
+                                        ? Colors.white
+                                        : const Color(0xFF4F46E5),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Welcome back!',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                      color: Theme.of(context).brightness == Brightness.dark
+                                          ? Colors.white.withOpacity(0.9)
+                                          : const Color(0xFF6B7280),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    authManager.currentUser?.username ?? 'Guest',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w700,
+                                      color: Theme.of(context).brightness == Brightness.dark
+                                          ? Colors.white
+                                          : const Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).brightness == Brightness.dark
+                                    ? Colors.white.withOpacity(0.1)
+                                    : const Color(0xFF4F46E5).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(
+                                Icons.person_outline_rounded,
+                                color: Theme.of(context).brightness == Brightness.dark
+                                    ? Colors.white.withOpacity(0.9)
+                                    : const Color(0xFF4F46E5),
+                                size: 20,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 24),
                 OverallSplitSummaryCards(
@@ -950,9 +1671,33 @@ class HomeScreen extends StatelessWidget {
                 FriendsBalancesList(
                     expenseManager: expenseManager, currentUserId: currentUserId),
                 const SizedBox(height: 24),
-                Text(
-                  'Recent Expenses',
-                  style: Theme.of(context).textTheme.titleLarge,
+                Row(
+                  children: [
+                    Text(
+                      'Recent Expenses',
+                      style: GoogleFonts.inter(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<Widget>(
+                            builder: (context) => const AllExpensesScreen(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.arrow_forward, size: 16),
+                      label: const Text('View All'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 RecentExpensesList(expenseManager: expenseManager),
@@ -1001,26 +1746,18 @@ class OverallSplitSummaryCards extends StatelessWidget {
       children: <Widget>[
         _buildSummaryCard(
           context,
-          'You Owe:',
+          'You Owe',
           '₹${totalIOwe.toStringAsFixed(2)}',
-          const LinearGradient(
-            // Updated to professional red gradient
-            colors: <Color>[Color(0xFFC62828), Color(0xFFEF5350)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
+          Icons.trending_down_rounded,
+          const Color(0xFFFF6B6B), // Soft red
           false, // isOwedToMe: false (I owe)
         ),
         _buildSummaryCard(
           context,
-          'You Are Owed:',
+          'You Are Owed',
           '₹${totalOwedToMe.toStringAsFixed(2)}',
-          const LinearGradient(
-            // Updated to professional green gradient
-            colors: <Color>[Color(0xFF2E7D32), Color(0xFF66BB6A)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
+          Icons.trending_up_rounded,
+          const Color(0xFF10B981), // Soft green
           true, // isOwedToMe: true (Others owe me)
         ),
       ],
@@ -1028,48 +1765,105 @@ class OverallSplitSummaryCards extends StatelessWidget {
   }
 
   Widget _buildSummaryCard(BuildContext context, String title, String value,
-      LinearGradient gradient, bool isOwedToMe) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      clipBehavior:
-          Clip.antiAlias, // Ensures gradient doesn't overflow rounded corners
-      child: InkWell(
-        // Make it tappable
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute<Widget>(
-              builder: (BuildContext context) => OverallSplitLedgerScreen(
-                isOwedToMe: isOwedToMe, // Corrected typo here
-              ),
-            ),
-          );
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: gradient,
+      IconData icon, Color accentColor, bool isOwedToMe) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark 
+            ? Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3)
+            : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: accentColor.withOpacity(0.15),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark 
+                ? Colors.black.withOpacity(0.2)
+                : accentColor.withOpacity(0.08),
+            offset: const Offset(0, 4),
+            blurRadius: 12,
+            spreadRadius: 0,
           ),
+          if (!isDark)
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              offset: const Offset(0, 2),
+              blurRadius: 4,
+              spreadRadius: 0,
+            ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<Widget>(
+                builder: (BuildContext context) => OverallSplitLedgerScreen(
+                  isOwedToMe: isOwedToMe,
+                ),
+              ),
+            );
+          },
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.all(20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: accentColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        icon,
+                        color: accentColor,
+                        size: 24,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        size: 14,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
                   value,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
+                  style: GoogleFonts.inter(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    color: accentColor,
+                    height: 1.1,
+                  ),
                 ),
               ],
             ),
@@ -1104,89 +1898,229 @@ class FriendsBalancesList extends StatelessWidget {
     // Sort friends for consistent display, e.g., alphabetically by username
     friendsToDisplay.sort((AppUser a, AppUser b) => a.username.compareTo(b.username));
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Theme.of(context).brightness == Brightness.dark
+            ? Border.all(
+                color: const Color(0xFF374151), // Subtle border for dark theme
+                width: 1,
+              )
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Theme.of(context).brightness == Brightness.dark
+                ? Colors.black.withOpacity(0.3) // Stronger shadow for dark theme
+                : Colors.black.withOpacity(0.08),
+            offset: const Offset(0, 4),
+            blurRadius: 12,
+            spreadRadius: 0,
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              'Friends & Balances',
-              style: Theme.of(context).textTheme.titleLarge,
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.people_outline,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Friends & Balances',
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute<Widget>(
+                        builder: (BuildContext context) => const FriendsListScreen(),
+                      ),
+                    );
+                  },
+                  child: Text('View All', 
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             if (friendsToDisplay.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Text(
-                  'No friends added yet. Go to Settings > Friends to add some!',
-                  style: Theme.of(context)
-                      .textTheme.bodyMedium
-                      ?.copyWith(fontStyle: FontStyle.italic),
-                  textAlign: TextAlign.center,
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.person_add_outlined,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'No friends added yet',
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Add friends to start splitting expenses together',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               )
             else
-              ListView.builder(
+              ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: friendsToDisplay.length,
+                separatorBuilder: (context, index) => Divider(
+                  height: 1,
+                  color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+                ),
                 itemBuilder: (BuildContext context, int index) {
                   final AppUser friend = friendsToDisplay[index];
                   final double balance = netOwed[friend.id] ?? 0.0;
 
                   String balanceText;
                   Color balanceColor;
+                  IconData balanceIcon;
 
                   if (balance == 0.0) {
                     balanceText = 'Settled';
-                    balanceColor = Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant; // Neutral color
+                    balanceColor = Theme.of(context).colorScheme.onSurfaceVariant;
+                    balanceIcon = Icons.check_circle_outline;
                   } else {
                     final bool youOwe = balance < 0;
                     final String balancePrefix = youOwe ? 'You owe' : 'Owes you';
                     balanceText =
                         '${balancePrefix} ₹${balance.abs().toStringAsFixed(2)}';
-                    balanceColor =
-                        youOwe ? Theme.of(context).colorScheme.error : Colors.green.shade700;
+                    balanceColor = youOwe ? 
+                        (Theme.of(context).brightness == Brightness.dark
+                            ? const Color(0xFFF87171) // Brighter red for dark theme
+                            : const Color(0xFFFF6B6B)) : 
+                        (Theme.of(context).brightness == Brightness.dark
+                            ? const Color(0xFF4ADE80) // Brighter green for dark theme
+                            : const Color(0xFF00D2FF));
+                    balanceIcon = youOwe ? Icons.arrow_upward : Icons.arrow_downward;
                   }
 
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero, // Reduce internal padding
-                    leading: CircleAvatar(
-                      backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                      backgroundImage: friend.profileImageUrl != null
-                          ? NetworkImage(friend.profileImageUrl!)
-                          : null,
-                      child: friend.profileImageUrl == null
-                          ? Icon(
-                              Icons.person,
-                              color: Theme.of(context).colorScheme.onSecondaryContainer,
-                            )
-                          : null,
-                    ),
-                    title: Text(friend.username),
-                    trailing: Text(
-                      balanceText,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: balanceColor,
-                            fontWeight: FontWeight.bold,
+                  return Container(
+                    margin: const EdgeInsets.symmetric(vertical: 8),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<Widget>(
+                            builder: (BuildContext context) => SplitDetailScreen(
+                              currentUserId: currentUserId,
+                              otherUserId: friend.id,
+                            ),
                           ),
-                    ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute<Widget>(
-                          builder: (BuildContext context) => SplitDetailScreen(
-                            currentUserId: currentUserId,
-                            otherUserId: friend.id,
-                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 24,
+                              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                              backgroundImage: friend.profileImageUrl != null
+                                  ? NetworkImage(friend.profileImageUrl!)
+                                  : null,
+                              child: friend.profileImageUrl == null
+                                  ? Text(
+                                      friend.username.substring(0, 1).toUpperCase(),
+                                      style: GoogleFonts.inter(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    friend.username,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                      color: Theme.of(context).colorScheme.onSurface,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        balanceIcon,
+                                        size: 14,
+                                        color: balanceColor,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        balanceText,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: balanceColor,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(
+                              Icons.chevron_right,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              size: 20,
+                            ),
+                          ],
                         ),
-                      );
-                    },
+                      ),
+                    ),
                   );
                 },
               ),
@@ -1829,50 +2763,184 @@ class ExpenseListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Theme.of(context).brightness == Brightness.dark
+            ? Border.all(
+                color: const Color(0xFF374151), // Subtle border for dark theme
+                width: 1,
+              )
+            : Border.all(
+                color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+              ),
+        boxShadow: [
+          BoxShadow(
+            color: Theme.of(context).brightness == Brightness.dark
+                ? Colors.black.withOpacity(0.2) // Stronger shadow for dark theme
+                : Colors.black.withOpacity(0.05),
+            offset: const Offset(0, 2),
+            blurRadius: 8,
+            spreadRadius: 0,
+          ),
+        ],
+      ),
       child: Dismissible(
         key: Key(expense.id),
         direction: DismissDirection.endToStart,
         onDismissed: (DismissDirection direction) {
           Provider.of<ExpenseManager>(context, listen: false).deleteExpense(expense.id);
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${expense.title} deleted')),
+            SnackBar(
+              content: Text('${expense.title} deleted'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
           );
         },
         background: Container(
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.error,
-            borderRadius: BorderRadius.circular(8),
+            gradient: LinearGradient(
+              colors: [
+                Colors.red.withOpacity(0.1),
+                Colors.red.withOpacity(0.3),
+              ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
           ),
           alignment: Alignment.centerRight,
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: const Icon(Icons.delete, color: Colors.white),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.delete_outline,
+                color: Colors.red.shade600,
+                size: 24,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Delete',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.red.shade600,
+                ),
+              ),
+            ],
+          ),
         ),
-        child: ListTile(
-          leading: Icon(expense.category.icon,
-              color: Theme.of(context).colorScheme.primary),
-          title: Text(expense.title),
-          subtitle: Text(
-              '${expense.category.displayName} - ${expense.date.day}/${expense.date.month}'),
-          trailing: Text(
-            '-₹${expense.amount.toStringAsFixed(2)}',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.error,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute<Widget>(
+                  builder: (BuildContext context) => AddExpenseScreen(expense: expense),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      expense.category.icon,
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          expense.title,
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              expense.category.displayName,
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            Text(
+                              ' • ',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            Text(
+                              DateFormat('MMM d, yyyy').format(expense.date),
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? const Color(0xFFF87171).withOpacity(0.2) // Lighter background in dark theme
+                              : const Color(0xFFFF6B6B).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '-₹${expense.amount.toStringAsFixed(2)}',
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFFF87171) // Brighter red in dark theme
+                                : const Color(0xFFFF6B6B),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Icon(
+                        Icons.chevron_right,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        size: 16,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
-          onTap: () {
-            // Navigate to edit expense screen
-            Navigator.push(
-              context,
-              MaterialPageRoute<Widget>(
-                builder: (BuildContext context) => AddExpenseScreen(expense: expense),
-              ),
-            );
-          },
         ),
       ),
     );
@@ -3331,6 +4399,11 @@ class SettingsPage extends StatelessWidget {
     final AppConfig appConfig = Provider.of<AppConfig>(context); // Access AppConfig for theme toggle
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Settings'),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        elevation: 0,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
@@ -3418,51 +4491,53 @@ class SettingsPage extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 16),
-            ListTile(
-              leading: Icon(Icons.sunny,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurfaceVariant), // Added leading icon for theme
-              title: const Text('Theme Mode'),
-              trailing: Switch(
-                value: appConfig.themeMode == ThemeMode.dark,
-                onChanged: (bool value) {
-                  appConfig.toggleTheme();
-                },
-                thumbIcon: MaterialStateProperty.resolveWith<Icon?>(
-                  (Set<MaterialState> states) {
-                    if (states.contains(MaterialState.selected)) {
-                      return const Icon(Icons.mode_night);
-                    }
-                    return const Icon(Icons.sunny);
-                  },
-                ),
+            Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
               ),
-            ),
-            const Divider(),
-            ListTile(
-              leading: Icon(Icons.line_axis,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-              title: const Text('Set Limits'),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute<Widget>(
-                    builder: (BuildContext context) => const SetLimitsScreen(),
+              child: ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                );
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: Icon(Icons.notifications_none,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-              title: const Text('Notifications'),
-              trailing: Switch(
-                value: true, // Placeholder for notification setting
-                onChanged: (bool value) {
-                  // Implement notification toggle logic here
-                },
+                  child: Icon(
+                    appConfig.themeMode == ThemeMode.dark ? Icons.dark_mode : Icons.light_mode,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    size: 20,
+                  ),
+                ),
+                title: Text(
+                  'Theme Mode',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                subtitle: Text(
+                  appConfig.themeMode == ThemeMode.dark ? 'Dark theme enabled' : 'Light theme enabled',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                trailing: Switch(
+                  value: appConfig.themeMode == ThemeMode.dark,
+                  onChanged: (bool value) {
+                    appConfig.toggleTheme();
+                  },
+                  thumbIcon: MaterialStateProperty.resolveWith<Icon?>(
+                    (Set<MaterialState> states) {
+                      if (states.contains(MaterialState.selected)) {
+                        return const Icon(Icons.dark_mode, size: 16);
+                      }
+                      return const Icon(Icons.light_mode, size: 16);
+                    },
+                  ),
+                ),
               ),
             ),
             const Divider(),
@@ -4381,6 +5456,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   final TextEditingController _currentPasswordController = TextEditingController();
   final TextEditingController _newPasswordController = TextEditingController();
   final TextEditingController _confirmNewPasswordController = TextEditingController();
+  bool _isCurrentPasswordVisible = false;
+  bool _isNewPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -4395,27 +5474,83 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       return;
     }
 
+    setState(() {
+      _isLoading = true;
+    });
+
     final AuthManager authManager = Provider.of<AuthManager>(context, listen: false);
     final String currentPassword = _currentPasswordController.text;
     final String newPassword = _newPasswordController.text;
 
+    // Additional validation
+    if (currentPassword == newPassword) {
+      setState(() {
+        _isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('New password must be different from current password'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return;
+    }
+
     final String? errorMessage = authManager.changePassword(currentPassword, newPassword);
+
+    setState(() {
+      _isLoading = false;
+    });
 
     if (errorMessage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Password changed successfully!')),
+        SnackBar(
+          content: const Text('Password changed successfully!'),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () {},
+          ),
+        ),
       );
       if (mounted) {
-        Navigator.pop(context); // Go back to settings screen
+        Navigator.pop(context);
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(errorMessage),
           backgroundColor: Theme.of(context).colorScheme.error,
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () {},
+          ),
         ),
       );
     }
+  }
+
+  // Enhanced password validation
+  String? _validateNewPassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'New password is required';
+    }
+    
+    if (value.length < 8) {
+      return 'Password must be at least 8 characters long';
+    }
+    
+    if (!RegExp(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)').hasMatch(value)) {
+      return 'Password must contain at least one uppercase letter, one lowercase letter, and one number';
+    }
+    
+    if (value.contains(' ')) {
+      return 'Password cannot contain spaces';
+    }
+    
+    return null;
   }
 
   @override
@@ -4423,6 +5558,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Change Password'),
+        backgroundColor: Theme.of(context).colorScheme.surface,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
@@ -4431,49 +5567,116 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              // Header section
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.security,
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Update your password to keep your account secure',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              
+              // Current password field
               TextFormField(
                 controller: _currentPasswordController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Current Password',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.lock_outline),
+                  hintText: 'Enter your current password',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    onPressed: () {
+                      setState(() {
+                        _isCurrentPasswordVisible = !_isCurrentPasswordVisible;
+                      });
+                    },
+                    icon: Icon(
+                      _isCurrentPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                    ),
+                  ),
                 ),
-                obscureText: true,
+                obscureText: !_isCurrentPasswordVisible,
                 validator: (String? value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter your current password';
+                    return 'Current password is required';
                   }
                   return null;
                 },
+                textInputAction: TextInputAction.next,
               ),
               const SizedBox(height: 16),
+              
+              // New password field
               TextFormField(
                 controller: _newPasswordController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'New Password',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.lock),
+                  hintText: 'Enter your new password',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  prefixIcon: const Icon(Icons.lock),
+                  suffixIcon: IconButton(
+                    onPressed: () {
+                      setState(() {
+                        _isNewPasswordVisible = !_isNewPasswordVisible;
+                      });
+                    },
+                    icon: Icon(
+                      _isNewPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                    ),
+                  ),
                 ),
-                obscureText: true,
-                validator: (String? value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a new password';
-                  }
-                  if (value.length < 6) {
-                    return 'Password must be at least 6 characters long';
-                  }
-                  return null;
-                },
+                obscureText: !_isNewPasswordVisible,
+                validator: _validateNewPassword,
+                textInputAction: TextInputAction.next,
               ),
               const SizedBox(height: 16),
+              
+              // Confirm new password field
               TextFormField(
                 controller: _confirmNewPasswordController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Confirm New Password',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.lock),
+                  hintText: 'Re-enter your new password',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  prefixIcon: const Icon(Icons.lock),
+                  suffixIcon: IconButton(
+                    onPressed: () {
+                      setState(() {
+                        _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
+                      });
+                    },
+                    icon: Icon(
+                      _isConfirmPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                    ),
+                  ),
                 ),
-                obscureText: true,
+                obscureText: !_isConfirmPasswordVisible,
                 validator: (String? value) {
                   if (value == null || value.isEmpty) {
                     return 'Please confirm your new password';
@@ -4483,32 +5686,108 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   }
                   return null;
                 },
+                textInputAction: TextInputAction.done,
+              ),
+              const SizedBox(height: 24),
+              
+              // Password requirements
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Password Requirements:',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildPasswordRequirement('At least 8 characters long'),
+                    _buildPasswordRequirement('One uppercase letter (A-Z)'),
+                    _buildPasswordRequirement('One lowercase letter (a-z)'),
+                    _buildPasswordRequirement('One number (0-9)'),
+                    _buildPasswordRequirement('No spaces allowed'),
+                    _buildPasswordRequirement('Different from current password'),
+                  ],
+                ),
               ),
               const SizedBox(height: 32),
+              
+              // Change password button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  // Changed from ElevatedButton.icon
-                  onPressed: _changePassword,
+                  onPressed: _isLoading ? null : _changePassword,
                   style: ElevatedButton.styleFrom(
-                    foregroundColor: Theme.of(context).brightness == Brightness.light
-                        ? Colors.black // Black text for light mode
-                        : Colors.white, // White text for dark mode
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12.0),
-                    child: Text(
-                      'Change Password',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium, // Removed hardcoded color, now controlled by foregroundColor
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    elevation: 2,
                   ),
+                  child: _isLoading
+                      ? SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).colorScheme.onPrimary,
+                            ),
+                          ),
+                        )
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.security),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Change Password',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPasswordRequirement(String requirement) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(
+            Icons.check_circle_outline,
+            size: 16,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            requirement,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
   }
