@@ -7,6 +7,14 @@ import 'main.dart'; // Import main.dart to access existing classes
 class ProfessionalSettingsPage extends StatelessWidget {
   const ProfessionalSettingsPage({super.key});
 
+  // Helper method to get initials from name
+  String _getInitials(String name) {
+    final List<String> parts = name.trim().split(' ');
+    if (parts.isEmpty) return 'G';
+    if (parts.length == 1) return parts[0].substring(0, 1).toUpperCase();
+    return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
     final AuthManager authManager = Provider.of<AuthManager>(context);
@@ -79,21 +87,16 @@ class ProfessionalSettingsPage extends StatelessWidget {
                       backgroundColor: Theme.of(context).brightness == Brightness.dark
                           ? Colors.white.withOpacity(0.1)
                           : const Color(0xFF4F46E5).withOpacity(0.1),
-                      backgroundImage: authManager.currentUser?.profileImageUrl != null
-                          ? NetworkImage(authManager.currentUser!.profileImageUrl!)
-                          : null,
-                      child: authManager.currentUser?.profileImageUrl == null
-                          ? Text(
-                              (authManager.currentUser?.username ?? 'G').substring(0, 1).toUpperCase(),
-                              style: GoogleFonts.inter(
-                                fontSize: 24,
-                                fontWeight: FontWeight.w700,
-                                color: Theme.of(context).brightness == Brightness.dark
-                                    ? Colors.white
-                                    : const Color(0xFF4F46E5),
-                              ),
-                            )
-                          : null,
+                      child: Text(
+                        _getInitials(authManager.currentUser?.name ?? authManager.currentUser?.username ?? 'G'),
+                        style: GoogleFonts.inter(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.white
+                              : const Color(0xFF4F46E5),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -248,26 +251,6 @@ class ProfessionalSettingsPage extends StatelessWidget {
                     ],
                   ),
                 ),
-                _buildDivider(),
-                _buildSettingsTile(
-                  context,
-                  'Currency',
-                  'INR (Indian Rupee)',
-                  Icons.currency_rupee_rounded,
-                  () {
-                    _showCurrencyDialog(context);
-                  },
-                ),
-                _buildDivider(),
-                _buildSettingsTile(
-                  context,
-                  'Language',
-                  'English',
-                  Icons.language_rounded,
-                  () {
-                    _showLanguageDialog(context);
-                  },
-                ),
               ],
             ),
             
@@ -319,53 +302,6 @@ class ProfessionalSettingsPage extends StatelessWidget {
                   },
                 ),
               ],
-            ),
-            
-            const SizedBox(height: 32),
-            
-            // Logout Button
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF6B6B).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color(0xFFFF6B6B).withOpacity(0.2),
-                  width: 1,
-                ),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () {
-                    _showLogoutDialog(context, authManager);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.logout_rounded,
-                          color: const Color(0xFFFF6B6B),
-                          size: 20,
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          'Sign Out',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFFFF6B6B),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
             ),
             
             const SizedBox(height: 24),
@@ -498,67 +434,6 @@ class ProfessionalSettingsPage extends StatelessWidget {
     );
   }
 
-  void _showCurrencyDialog(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Select Currency'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: const Text('INR (Indian Rupee)'),
-                leading: const Text('₹'),
-                trailing: const Icon(Icons.check_circle, color: Colors.green),
-                onTap: () => Navigator.pop(context),
-              ),
-              ListTile(
-                title: const Text('USD (US Dollar)'),
-                leading: const Text('\$'),
-                onTap: () => Navigator.pop(context),
-              ),
-              ListTile(
-                title: const Text('EUR (Euro)'),
-                leading: const Text('€'),
-                onTap: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showLanguageDialog(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Select Language'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: const Text('English'),
-                trailing: const Icon(Icons.check_circle, color: Colors.green),
-                onTap: () => Navigator.pop(context),
-              ),
-              ListTile(
-                title: const Text('Hindi'),
-                onTap: () => Navigator.pop(context),
-              ),
-              ListTile(
-                title: const Text('Spanish'),
-                onTap: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   void _showHelpDialog(BuildContext context) {
     showDialog<void>(
       context: context,
@@ -567,8 +442,8 @@ class ProfessionalSettingsPage extends StatelessWidget {
           title: const Text('Help & Support'),
           content: const Text(
             'For support and assistance:\n\n'
-            '• Email: support@splitmaster.com\n'
-            '• FAQ: Available in the app\n'
+            '• Email: 23aiml066@charusat.edu.in\n'
+            '• Email: 23aiml067@charusat.edu.in\n'
             '• Response time: 24-48 hours'
           ),
           actions: [
@@ -603,44 +478,6 @@ class ProfessionalSettingsPage extends StatelessWidget {
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showLogoutDialog(BuildContext context, AuthManager authManager) {
-    showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(
-            'Sign Out',
-            style: GoogleFonts.inter(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          content: Text(
-            'Are you sure you want to sign out of your account?',
-            style: GoogleFonts.inter(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                authManager.logout();
-                Navigator.of(context).pop();
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFFF6B6B),
-              ),
-              child: const Text('Sign Out'),
             ),
           ],
         );

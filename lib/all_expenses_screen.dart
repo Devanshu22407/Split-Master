@@ -3,6 +3,49 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'main.dart'; // Import main.dart to access existing classes
 
+// Responsive utility class for AllExpensesScreen
+class ResponsiveUtils {
+  static bool isSmallScreen(BuildContext context) {
+    return MediaQuery.of(context).size.height < 700;
+  }
+  
+  static bool isTablet(BuildContext context) {
+    return MediaQuery.of(context).size.width > 600;
+  }
+  
+  static double getResponsivePadding(BuildContext context, {double small = 16, double normal = 24}) {
+    return isSmallScreen(context) ? small : normal;
+  }
+  
+  static double getResponsiveSpacing(BuildContext context, {double small = 12, double normal = 16}) {
+    return isSmallScreen(context) ? small : normal;
+  }
+  
+  static double getResponsiveFontSize(BuildContext context, {double small = 14, double normal = 16}) {
+    return isSmallScreen(context) ? small : normal;
+  }
+  
+  static EdgeInsets getResponsiveScreenPadding(BuildContext context) {
+    final isSmall = isSmallScreen(context);
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    return EdgeInsets.fromLTRB(
+      isSmall ? 16.0 : 20.0,
+      isSmall ? 16.0 : 20.0,
+      isSmall ? 16.0 : 20.0,
+      keyboardHeight > 0 ? 16.0 : (isSmall ? 16.0 : 20.0),
+    );
+  }
+  
+  static String formatAmountWithK(double amount) {
+    if (amount.abs() >= 1000) {
+      double kAmount = amount / 1000;
+      return '₹${kAmount.toStringAsFixed(1)}k';
+    } else {
+      return '₹${amount.toStringAsFixed(2)}';
+    }
+  }
+}
+
 // --- All Expenses Screen ---
 class AllExpensesScreen extends StatefulWidget {
   const AllExpensesScreen({super.key});
@@ -144,46 +187,62 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
           ),
         ],
       ),
-      body: Consumer<ExpenseManager>(
-        builder: (context, expenseManager, child) {
-          final List<Expense> allExpenses = _getFilteredAndSortedExpenses(expenseManager.expenses);
-          final double totalAmount = allExpenses.fold(0.0, (sum, expense) => sum + expense.amount);
+      body: SafeArea(
+        child: Consumer2<ExpenseManager, AuthManager>(
+          builder: (context, expenseManager, authManager, child) {
+            final String currentUserId = authManager.currentUser?.id ?? 'unknown_user';
+            final List<Expense> allExpenses = _getFilteredAndSortedExpenses(expenseManager.expenses);
+            
+            // Calculate total personal share instead of total expense amounts
+            final double totalPersonalShare = allExpenses.fold(0.0, (sum, expense) {
+              if (expense.splitDetails.isEmpty) {
+                // No split details - if user paid, they bear full cost
+                return sum + (expense.payerId == currentUserId ? expense.amount : 0.0);
+              } else {
+                // Has split details - find user's share
+                final userSplit = expense.splitDetails.firstWhere(
+                  (split) => split.userId == currentUserId,
+                  orElse: () => SplitShare(userId: currentUserId, amount: 0.0),
+                );
+                return sum + userSplit.amount;
+              }
+            });
 
-          return Column(
-            children: [
-              // Header with search and stats
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      offset: const Offset(0, 2),
-                      blurRadius: 4,
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    // Search bar
-                    TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        hintText: 'Search expenses...',
-                        prefixIcon: const Icon(Icons.search),
-                        suffixIcon: _searchController.text.isNotEmpty
-                            ? IconButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _searchController.clear();
-                                  });
-                                },
-                                icon: const Icon(Icons.clear),
-                              )
-                            : null,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
+            return Column(
+              children: [
+                // Header with search and stats
+                Container(
+                  padding: ResponsiveUtils.getResponsiveScreenPadding(context),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        offset: const Offset(0, 2),
+                        blurRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      // Search bar
+                      TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search expenses...',
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon: _searchController.text.isNotEmpty
+                              ? IconButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _searchController.clear();
+                                    });
+                                  },
+                                  icon: const Icon(Icons.clear),
+                                )
+                              : null,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
                         ),
                         filled: true,
                         fillColor: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
@@ -213,7 +272,7 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
                       children: [
                         Expanded(
                           child: _buildStatCard(
-                            'Total Expenses',
+                            'Expenses',
                             allExpenses.length.toString(),
                             Icons.receipt_long,
                             Theme.of(context).colorScheme.primary,
@@ -222,8 +281,10 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: _buildStatCard(
-                            'Total Amount',
-                            '₹${totalAmount.toStringAsFixed(2)}',
+                            'Amount',
+                            totalPersonalShare >= 10000
+                                ? ResponsiveUtils.formatAmountWithK(totalPersonalShare)
+                                : '₹${totalPersonalShare.toStringAsFixed(2)}',
                             Icons.currency_rupee,
                             const Color(0xFFFF6B6B),
                           ),
@@ -244,16 +305,17 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
                         itemBuilder: (context, index) {
                           final expense = allExpenses[index];
                           return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
+                            padding: EdgeInsets.only(bottom: ResponsiveUtils.getResponsiveSpacing(context, small: 6, normal: 8)),
                             child: ExpenseListItem(expense: expense),
                           );
                         },
                       ),
-              ),
-            ],
-          );
-        },
-      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+        ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           Navigator.push(
@@ -296,6 +358,7 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
 
   Widget _buildStatCard(String title, String value, IconData icon, Color color) {
     return Container(
+      height: 95, // Fixed height to ensure equal size
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
@@ -307,6 +370,7 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
             children: [
@@ -323,11 +387,12 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
           Text(
             value,
             style: GoogleFonts.inter(
@@ -335,6 +400,8 @@ class _AllExpensesScreenState extends State<AllExpensesScreen> {
               fontWeight: FontWeight.w700,
               color: color,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),

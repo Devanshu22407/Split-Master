@@ -2,12 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'main.dart'; // Import main.dart to access existing classes
-import 'all_expenses_screen.dart';
 import 'professional_settings_screen.dart';
 
 // --- Profile Screen ---
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
+
+  String _getInitials(String name) {
+    if (name.isEmpty) return 'G';
+    final parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -20,34 +28,18 @@ class ProfileScreen extends StatelessWidget {
       body: Consumer2<AuthManager, ExpenseManager>(
         builder: (context, authManager, expenseManager, child) {
           final user = authManager.currentUser;
-          final userId = user?.id ?? '';
-          
-          // Calculate user statistics
-          final userExpenses = expenseManager.expenses.where((expense) => 
-            expense.payerId == userId
-          ).toList();
-          
-          final totalExpenses = userExpenses.length;
-          final totalAmountPaid = userExpenses.fold(0.0, (sum, expense) => sum + expense.amount);
-          
-          final Map<String, double> netOwed = expenseManager.getOwedAmounts(userId);
-          final double totalOwedToMe = netOwed.entries
-              .where((entry) => entry.value > 0)
-              .fold(0.0, (sum, entry) => sum + entry.value);
-          final double totalIOwe = netOwed.entries
-              .where((entry) => entry.value < 0)
-              .fold(0.0, (sum, entry) => sum + entry.value.abs());
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                // Profile Header
-                Container(
-                  padding: const EdgeInsets.all(28),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: Theme.of(context).brightness == Brightness.dark
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: ResponsiveUtils.getResponsiveScreenPadding(context),
+              child: Column(
+                children: [
+                  // Profile Header
+                  Container(
+                    padding: EdgeInsets.all(ResponsiveUtils.getResponsivePadding(context, small: 20, normal: 28)),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: Theme.of(context).brightness == Brightness.dark
                           ? [
                               const Color(0xFF4F46E5), // Professional indigo
                               const Color(0xFF7C3AED), // Professional purple
@@ -56,9 +48,9 @@ class ProfileScreen extends StatelessWidget {
                               const Color(0xFFF8FAFC), // Very light slate
                               const Color(0xFFE0E7FF), // Light indigo
                             ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                     borderRadius: BorderRadius.circular(24),
                     border: Theme.of(context).brightness == Brightness.light
                         ? Border.all(
@@ -86,7 +78,7 @@ class ProfileScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(6),
+                        padding: EdgeInsets.all(ResponsiveUtils.getResponsiveSpacing(context, small: 4, normal: 6)),
                         decoration: BoxDecoration(
                           color: Theme.of(context).brightness == Brightness.dark
                               ? Colors.white.withOpacity(0.15)
@@ -110,14 +102,14 @@ class ProfileScreen extends StatelessWidget {
                           ],
                         ),
                         child: CircleAvatar(
-                          radius: 50,
+                          radius: ResponsiveUtils.isSmallScreen(context) ? 24 : 30,
                           backgroundColor: Theme.of(context).brightness == Brightness.dark
                               ? Colors.white.withOpacity(0.1)
                               : const Color(0xFF4F46E5).withOpacity(0.08),
                           child: Text(
-                            (user?.username ?? 'G').substring(0, 1).toUpperCase(),
+                            _getInitials(user?.name ?? user?.username ?? 'G'),
                             style: GoogleFonts.inter(
-                              fontSize: 36,
+                              fontSize: 22,
                               fontWeight: FontWeight.w700,
                               color: Theme.of(context).brightness == Brightness.dark
                                   ? Colors.white
@@ -166,80 +158,10 @@ class ProfileScreen extends StatelessWidget {
                     ],
                   ),
                 ),
-                
-                const SizedBox(height: 24),
-                
-                // Statistics Cards
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildStatCard(
-                        context,
-                        'Total Expenses',
-                        totalExpenses.toString(),
-                        Icons.receipt_long_rounded,
-                        const Color(0xFF3B82F6),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildStatCard(
-                        context,
-                        'Amount Paid',
-                        '₹${totalAmountPaid.toStringAsFixed(2)}',
-                        Icons.payment_rounded,
-                        const Color(0xFF8B5CF6),
-                      ),
-                    ),
-                  ],
-                ),
-                
-                const SizedBox(height: 12),
-                
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildStatCard(
-                        context,
-                        'You\'re Owed',
-                        '₹${totalOwedToMe.toStringAsFixed(2)}',
-                        Icons.trending_up_rounded,
-                        const Color(0xFF10B981),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildStatCard(
-                        context,
-                        'You Owe',
-                        '₹${totalIOwe.toStringAsFixed(2)}',
-                        Icons.trending_down_rounded,
-                        const Color(0xFFFF6B6B),
-                      ),
-                    ),
-                  ],
-                ),
-                
+
                 const SizedBox(height: 32),
                 
                 // Financial Management Options
-                _buildProfileOption(
-                  context,
-                  'My Expenses',
-                  'View and manage your expense history',
-                  Icons.receipt_long_rounded,
-                  () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute<Widget>(
-                        builder: (context) => const AllExpensesScreen(),
-                      ),
-                    );
-                  },
-                ),
-                
-                const SizedBox(height: 12),
-                
                 _buildProfileOption(
                   context,
                   'Set Spending Limits',
@@ -247,18 +169,6 @@ class ProfileScreen extends StatelessWidget {
                   Icons.trending_up_rounded,
                   () {
                     _showLimitsSettings(context);
-                  },
-                ),
-                
-                const SizedBox(height: 12),
-                
-                _buildProfileOption(
-                  context,
-                  'Export Data',
-                  'Download your expense reports and data',
-                  Icons.download_rounded,
-                  () {
-                    _showExportDialog(context);
                   },
                 ),
                 
@@ -279,15 +189,13 @@ class ProfileScreen extends StatelessWidget {
                   },
                 ),
                 
-                const SizedBox(height: 24),
-                
                 const SizedBox(height: 12),
                 
                 _buildProfileOption(
                   context,
                   'Sign Out',
                   'Sign out of your account',
-                  Icons.exit_to_app_rounded,
+                  Icons.logout_rounded,
                   () {
                     _showSignOutDialog(context, authManager);
                   },
@@ -297,72 +205,9 @@ class ProfileScreen extends StatelessWidget {
                 const SizedBox(height: 24),
               ],
             ),
+          ),
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildStatCard(BuildContext context, String title, String value, 
-      IconData icon, Color color) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark 
-            ? Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3)
-            : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: color.withOpacity(0.15),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: isDark 
-                ? Colors.black.withOpacity(0.2)
-                : color.withOpacity(0.08),
-            offset: const Offset(0, 4),
-            blurRadius: 12,
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              icon,
-              color: color,
-              size: 20,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: GoogleFonts.inter(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: GoogleFonts.inter(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -496,79 +341,6 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-
-
-  void _showExportDialog(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(
-            'Export Data',
-            style: GoogleFonts.inter(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Choose export format:',
-                style: GoogleFonts.inter(),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: const Icon(Icons.table_chart),
-                title: const Text('CSV Format'),
-                subtitle: const Text('For Excel and spreadsheet apps'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _exportToCsv(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.description),
-                title: const Text('PDF Report'),
-                subtitle: const Text('Formatted expense report'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _exportToPdf(context);
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _exportToCsv(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('CSV export feature coming soon!'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ),
-    );
-  }
-
-  void _exportToPdf(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('PDF export feature coming soon!'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ),
-    );
-  }
-
   void _showLimitsSettings(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -593,6 +365,28 @@ class _LimitsModalBottomSheetState extends State<_LimitsModalBottomSheet> {
   final _monthlyLimitController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // Load saved limits from ExpenseManager
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final expenseManager = Provider.of<ExpenseManager>(context, listen: false);
+      
+      setState(() {
+        _dailyLimitEnabled = expenseManager.isDailyLimitEnabled;
+        _monthlyLimitEnabled = expenseManager.isMonthlyLimitEnabled;
+        
+        if (expenseManager.dailyLimit != null) {
+          _dailyLimitController.text = expenseManager.dailyLimit!.toStringAsFixed(0);
+        }
+        
+        if (expenseManager.monthlyLimit != null) {
+          _monthlyLimitController.text = expenseManager.monthlyLimit!.toStringAsFixed(0);
+        }
+      });
+    });
+  }
+
+  @override
   void dispose() {
     _dailyLimitController.dispose();
     _monthlyLimitController.dispose();
@@ -601,8 +395,7 @@ class _LimitsModalBottomSheetState extends State<_LimitsModalBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-
-            return Container(
+    return Container(
               height: MediaQuery.of(context).size.height * 0.7,
               decoration: BoxDecoration(
                 color: Theme.of(context).scaffoldBackgroundColor,
@@ -817,6 +610,8 @@ class _LimitsModalBottomSheetState extends State<_LimitsModalBottomSheet> {
                           width: double.infinity,
                           child: ElevatedButton(
                             onPressed: () {
+                              final expenseManager = Provider.of<ExpenseManager>(context, listen: false);
+                              
                               // Validate if at least one limit is enabled
                               if (!_dailyLimitEnabled && !_monthlyLimitEnabled) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -849,7 +644,40 @@ class _LimitsModalBottomSheetState extends State<_LimitsModalBottomSheet> {
                                 return;
                               }
 
-                              // Save logic here - for now just show success message
+                              // Parse and save limits
+                              double? dailyLimit;
+                              double? monthlyLimit;
+                              
+                              if (_dailyLimitEnabled) {
+                                dailyLimit = double.tryParse(_dailyLimitController.text);
+                                if (dailyLimit == null || dailyLimit <= 0) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text('Please enter a valid daily limit'),
+                                      backgroundColor: Colors.orange,
+                                    ),
+                                  );
+                                  return;
+                                }
+                              }
+                              
+                              if (_monthlyLimitEnabled) {
+                                monthlyLimit = double.tryParse(_monthlyLimitController.text);
+                                if (monthlyLimit == null || monthlyLimit <= 0) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text('Please enter a valid monthly limit'),
+                                      backgroundColor: Colors.orange,
+                                    ),
+                                  );
+                                  return;
+                                }
+                              }
+
+                              // Save to ExpenseManager
+                              expenseManager.setDailyLimit(dailyLimit, _dailyLimitEnabled);
+                              expenseManager.setMonthlyLimit(monthlyLimit, _monthlyLimitEnabled);
+
                               Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
@@ -866,27 +694,17 @@ class _LimitsModalBottomSheetState extends State<_LimitsModalBottomSheet> {
                               backgroundColor: const Color(0xFF4F46E5),
                               foregroundColor: Colors.white,
                               elevation: 0,
-                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.save_rounded,
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'Save Limits',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
+                            child: Text(
+                              'Save Limits',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),

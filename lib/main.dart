@@ -3,11 +3,73 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:table_calendar/table_calendar.dart';
+import 'storage_service.dart';
 import 'all_expenses_screen.dart';
 import 'profile_screen.dart';
-import 'professional_settings_screen.dart';
 
 // --- Data Models ---
+
+// Responsive utility class
+class ResponsiveUtils {
+  static bool isSmallScreen(BuildContext context) {
+    return MediaQuery.of(context).size.height < 700;
+  }
+  
+  static bool isTablet(BuildContext context) {
+    return MediaQuery.of(context).size.width > 600;
+  }
+  
+  static double getResponsivePadding(BuildContext context, {double small = 16, double normal = 24}) {
+    return isSmallScreen(context) ? small : normal;
+  }
+  
+  static double getResponsiveSpacing(BuildContext context, {double small = 12, double normal = 16}) {
+    return isSmallScreen(context) ? small : normal;
+  }
+  
+  static double getResponsiveFontSize(BuildContext context, {double small = 14, double normal = 16}) {
+    return isSmallScreen(context) ? small : normal;
+  }
+  
+  static EdgeInsets getResponsiveScreenPadding(BuildContext context) {
+    final isSmall = isSmallScreen(context);
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    return EdgeInsets.fromLTRB(
+      isSmall ? 16.0 : 24.0,
+      isSmall ? 16.0 : 24.0,
+      isSmall ? 16.0 : 24.0,
+      keyboardHeight > 0 ? 16.0 : (isSmall ? 16.0 : 24.0),
+    );
+  }
+  
+  static String formatAmountWithK(double amount, {String currencySymbol = '₹'}) {
+    if (amount.abs() >= 1000) {
+      double kAmount = amount / 1000;
+      return '${currencySymbol}${kAmount.toStringAsFixed(1)}k';
+    } else {
+      return '${currencySymbol}${amount.toStringAsFixed(2)}';
+    }
+  }
+}
+
+// Helper function to generate initials from full name
+class ProfileUtils {
+  static String getInitials(String fullName) {
+    if (fullName.trim().isEmpty) return '?';
+    
+    List<String> nameParts = fullName.trim().split(' ');
+    if (nameParts.length == 1) {
+      // If only one name, return first letter
+      return nameParts[0].substring(0, 1).toUpperCase();
+    } else {
+      // Return first letter of first name + first letter of last name
+      String firstInitial = nameParts.first.substring(0, 1).toUpperCase();
+      String lastInitial = nameParts.last.substring(0, 1).toUpperCase();
+      return firstInitial + lastInitial;
+    }
+  }
+}
 
 enum ExpenseCategory {
   food,
@@ -72,7 +134,6 @@ class AppUser {
   final DateTime? dob;
   final String? country;
   final String? gender;
-  final String? profileImageUrl;
   final String? phoneNumber;
 
   const AppUser({
@@ -84,7 +145,6 @@ class AppUser {
     this.country,
     this.gender,
     this.phoneNumber,
-    this.profileImageUrl,
   });
 
   AppUser copyWith({
@@ -96,7 +156,6 @@ class AppUser {
     String? country,
     String? gender,
     String? phoneNumber,
-    String? profileImageUrl,
   }) {
     return AppUser(
       id: id ?? this.id,
@@ -107,7 +166,6 @@ class AppUser {
       country: country ?? this.country,
       gender: gender ?? this.gender,
       phoneNumber: phoneNumber ?? this.phoneNumber,
-      profileImageUrl: profileImageUrl ?? this.profileImageUrl,
     );
   }
 
@@ -161,11 +219,50 @@ class AuthManager extends ChangeNotifier {
   AppUser? get currentUser => _currentUser;
 
   AuthManager() {
-    // Simulate initial login status (e.g., from stored token)
-    _isAuthenticated = false; // Start unauthenticated
+    // Check for existing session on startup
+    _loadSession();
   }
 
-  void login(String email, String password) {
+  /// Load existing session from SharedPreferences
+  Future<void> _loadSession() async {
+    final currentEmail = StorageService.getCurrentUserEmail();
+    if (currentEmail != null) {
+      final userInfo = StorageService.loadUserInfo(currentEmail);
+      if (userInfo != null) {
+        _isAuthenticated = true;
+        _currentUser = AppUser(
+          id: userInfo['id'] ?? 'user_1',
+          name: userInfo['name'] ?? 'User',
+          username: userInfo['username'] ?? 'user',
+          email: currentEmail,
+          dob: userInfo['dob'] != null ? DateTime.parse(userInfo['dob']) : null,
+          country: userInfo['country'],
+          gender: userInfo['gender'],
+          phoneNumber: userInfo['phoneNumber'],
+        );
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Save current user session to SharedPreferences
+  Future<void> _saveSession() async {
+    if (_currentUser != null) {
+      await StorageService.setCurrentUserEmail(_currentUser!.email);
+      await StorageService.saveUserInfo(_currentUser!.email, {
+        'id': _currentUser!.id,
+        'name': _currentUser!.name,
+        'username': _currentUser!.username,
+        'email': _currentUser!.email,
+        'dob': _currentUser!.dob?.toIso8601String(),
+        'country': _currentUser!.country,
+        'gender': _currentUser!.gender,
+        'phoneNumber': _currentUser!.phoneNumber,
+      });
+    }
+  }
+
+  Future<void> login(String email, String password) async {
     // Input validation
     if (email.isEmpty || password.isEmpty) {
       throw Exception('Email and password are required');
@@ -177,30 +274,63 @@ class AuthManager extends ChangeNotifier {
       throw Exception('Please enter a valid email address');
     }
     
-    // Simulate authentication logic
-    if (email.trim() == 'user@example.com' && password == _dummyPassword) {
+    final cleanEmail = email.trim();
+    
+    // Check if user has existing data
+    if (StorageService.hasUserData(cleanEmail)) {
+      // Verify password for existing user
+      if (!StorageService.verifyPassword(cleanEmail, password)) {
+        throw Exception('Invalid email or password');
+      }
+      
+      // Load existing user data
+      final userInfo = StorageService.loadUserInfo(cleanEmail);
+      if (userInfo != null) {
+        _isAuthenticated = true;
+        _currentUser = AppUser(
+          id: userInfo['id'],
+          name: userInfo['name'],
+          username: userInfo['username'],
+          email: cleanEmail,
+          dob: userInfo['dob'] != null ? DateTime.parse(userInfo['dob']) : null,
+          country: userInfo['country'],
+          gender: userInfo['gender'],
+          phoneNumber: userInfo['phoneNumber'],
+        );
+        _saveSession();
+        notifyListeners();
+        return;
+      } else {
+        throw Exception('User data corrupted. Please contact support.');
+      }
+    }
+    
+    // For demo user (backwards compatibility)
+    if (cleanEmail == 'user@example.com' && password == _dummyPassword) {
       _isAuthenticated = true;
       _currentUser = AppUser(
         id: 'user_1',
         name: 'John Doe',
         username: 'johndoe',
-        email: email.trim(),
+        email: cleanEmail,
         dob: null,
         country: null,
         gender: null,
         phoneNumber: null,
-        profileImageUrl:
-            'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg',
       );
+      // Save demo user password for consistency
+      await StorageService.savePassword(cleanEmail, password);
+      _saveSession();
       notifyListeners();
     } else {
+      // Invalid credentials
       throw Exception('Invalid email or password');
     }
   }
 
-  void signup(String name, String email, String password) {
+  Future<void> signup(String name, String username, String email, String password) async {
     // Input validation
-    if (name.isEmpty || email.isEmpty || password.isEmpty) {
+    if (name.isEmpty || username.isEmpty || email.isEmpty || password.isEmpty) {
       throw Exception('All fields are required');
     }
     
@@ -211,6 +341,19 @@ class AuthManager extends ChangeNotifier {
     
     if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(name.trim())) {
       throw Exception('Name can only contain letters and spaces');
+    }
+    
+    // Username validation
+    if (username.trim().length < 3) {
+      throw Exception('Username must be at least 3 characters long');
+    }
+    
+    if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(username.trim())) {
+      throw Exception('Username can only contain letters, numbers, and underscores');
+    }
+    
+    if (username.trim().length > 20) {
+      throw Exception('Username cannot be longer than 20 characters');
     }
     
     // Email format validation
@@ -232,32 +375,41 @@ class AuthManager extends ChangeNotifier {
       throw Exception('Password cannot contain spaces');
     }
     
-    // Simulate signup logic
+    final cleanEmail = email.trim();
+    
+    // Check if user already exists
+    if (StorageService.hasUserData(cleanEmail)) {
+      throw Exception('An account with this email already exists. Please login instead.');
+    }
+    
+    // Create new user
     _isAuthenticated = true;
     _currentUser = AppUser(
       id: 'user_${DateTime.now().millisecondsSinceEpoch}',
       name: name.trim(),
-      username: name.trim().toLowerCase().replaceAll(' ', ''),
-      email: email.trim(),
+      username: username.trim(),
+      email: cleanEmail,
       dob: null,
       country: null,
       gender: null,
       phoneNumber: null,
-      profileImageUrl:
-          'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg',
     );
-    _dummyPassword = password; // Set the new password
+    
+    // Save password and user session
+    await StorageService.savePassword(cleanEmail, password);
+    _saveSession();
     notifyListeners();
   }
 
   void logout() {
     _isAuthenticated = false;
     _currentUser = null;
-    _dummyPassword = 'password'; // Reset dummy password on logout, or keep it.
+    StorageService.clearCurrentUser(); // Clear current session
+    _dummyPassword = 'password'; // Reset dummy password
     notifyListeners();
   }
 
-  String? changePassword(String currentPassword, String newPassword) {
+  Future<String?> changePassword(String currentPassword, String newPassword) async {
     if (_currentUser == null) {
       return 'No user logged in to change password.';
     }
@@ -267,7 +419,8 @@ class AuthManager extends ChangeNotifier {
       return 'Current password is required.';
     }
     
-    if (currentPassword != _dummyPassword) {
+    // Check current password against stored password
+    if (!StorageService.verifyPassword(_currentUser!.email, currentPassword)) {
       return 'Current password is incorrect.';
     }
     
@@ -293,7 +446,7 @@ class AuthManager extends ChangeNotifier {
     }
     
     // Update password
-    _dummyPassword = newPassword;
+    await StorageService.savePassword(_currentUser!.email, newPassword);
     debugPrint('Password changed successfully for ${_currentUser!.email}');
     notifyListeners();
     return null; // Success
@@ -306,7 +459,6 @@ class AuthManager extends ChangeNotifier {
     String? country,
     String? gender,
     String? phoneNumber,
-    String? profileImageUrl,
   }) {
     if (_currentUser == null) {
       debugPrint('Error: No user logged in to update profile.');
@@ -319,54 +471,96 @@ class AuthManager extends ChangeNotifier {
       country: country,
       gender: gender,
       phoneNumber: phoneNumber,
-      profileImageUrl: profileImageUrl,
     );
+    
+    // Save updated user info to SharedPreferences
+    _saveSession();
     notifyListeners();
   }
 }
 
 class AppConfig extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light; // Default to light theme for professional look
+  String _currency = 'INR'; // Default currency
 
   ThemeMode get themeMode => _themeMode;
+  String get currency => _currency;
+
+  AppConfig() {
+    _loadThemeMode();
+  }
+
+  /// Load theme mode from SharedPreferences
+  void _loadThemeMode() {
+    final savedTheme = StorageService.loadThemeMode();
+    if (savedTheme != null) {
+      switch (savedTheme) {
+        case 'dark':
+          _themeMode = ThemeMode.dark;
+          break;
+        case 'light':
+        default:
+          _themeMode = ThemeMode.light;
+          break;
+      }
+    }
+  }
+
+  /// Save theme mode to SharedPreferences
+  Future<void> _saveThemeMode() async {
+    final themeString = _themeMode == ThemeMode.dark ? 'dark' : 'light';
+    await StorageService.saveThemeMode(themeString);
+  }
+
+  // Get currency symbol based on selected currency
+  String get currencySymbol {
+    switch (_currency) {
+      case 'USD':
+        return '\$';
+      case 'EUR':
+        return '€';
+      case 'INR':
+      default:
+        return '₹';
+    }
+  }
+
+  // Get currency display name
+  String get currencyDisplayName {
+    switch (_currency) {
+      case 'USD':
+        return 'USD (US Dollar)';
+      case 'EUR':
+        return 'EUR (Euro)';
+      case 'INR':
+      default:
+        return 'INR (Indian Rupee)';
+    }
+  }
 
   void toggleTheme() {
     _themeMode =
         _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+    _saveThemeMode();
+    notifyListeners();
+  }
+
+  void setCurrency(String currency) {
+    _currency = currency;
     notifyListeners();
   }
 }
 
 class ExpenseManager extends ChangeNotifier {
   final List<Expense> _expenses = <Expense>[];
-  final List<AppUser> _allUsers = <AppUser>[
-    AppUser(
-        id: 'user_1',
-        name: 'John Doe',
-        email: 'john@example.com',
-        username: 'johndoe',
-        profileImageUrl:
-            'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg'),
-    AppUser(
-        id: 'user_2',
-        name: 'Jane Smith',
-        email: 'jane@example.com',
-        username: 'janesmith',
-        profileImageUrl:
-            'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg'),
-    AppUser(
-        id: 'user_3',
-        name: 'Bob Johnson',
-        email: 'bob@example.com',
-        username: 'bobjohnson',
-        profileImageUrl:
-            'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg'),
-  ];
+  final List<AppUser> _allUsers = <AppUser>[];
 
   double? _dailyLimit;
   double? _monthlyLimit;
   bool _isDailyLimitEnabled = false;
   bool _isMonthlyLimitEnabled = false;
+
+  String? _currentUserEmail;
 
   List<Expense> get expenses => List<Expense>.unmodifiable(_expenses);
   List<AppUser> get allUsers => List<AppUser>.unmodifiable(_allUsers);
@@ -377,95 +571,87 @@ class ExpenseManager extends ChangeNotifier {
   bool get isMonthlyLimitEnabled => _isMonthlyLimitEnabled;
 
   ExpenseManager() {
-    // Initialize with dummy data
-    _expenses.addAll(<Expense>[
-      Expense(
-        id: 'e1',
-        title: 'Groceries',
-        amount: 55.75,
-        category: ExpenseCategory.groceries,
-        date: DateTime.now().subtract(const Duration(days: 2)),
-        payerId: 'user_1',
-      ),
-      Expense(
-        id: 'e2',
-        title: 'Dinner with friends',
-        amount: 120.00,
-        category: ExpenseCategory.food,
-        date: DateTime.now().subtract(const Duration(days: 5)),
-        payerId: 'user_2', // Jane paid
-        splitDetails: <SplitShare>[
-          SplitShare(userId: 'user_1', amount: 40.0, paid: false), // John owes Jane
-          SplitShare(
-              userId: 'user_2', amount: 40.0, paid: true), // Jane (payer) has paid her share
-          SplitShare(userId: 'user_3', amount: 40.0, paid: false), // Bob owes Jane
-        ],
-      ),
-      Expense(
-        id: 'e3',
-        title: 'Bus Ticket',
-        amount: 2.50,
-        category: ExpenseCategory.transportation,
-        date: DateTime.now().subtract(const Duration(days: 1)),
-        payerId: 'user_1',
-      ),
-      Expense(
-        id: 'e4',
-        title: 'Movie Tickets',
-        amount: 30.00,
-        category: ExpenseCategory.entertainment,
-        date: DateTime.now().subtract(const Duration(days: 3)),
-        payerId: 'user_3', // Bob paid
-        splitDetails: <SplitShare>[
-          SplitShare(userId: 'user_1', amount: 15.0, paid: false), // John owes Bob
-          SplitShare(
-              userId: 'user_3', amount: 15.0, paid: true), // Bob (payer) has paid his share
-        ],
-      ),
-      Expense(
-        id: 'e5',
-        title: 'Electricity Bill',
-        amount: 80.00,
-        category: ExpenseCategory.utilities,
-        date: DateTime.now().subtract(const Duration(days: 10)),
-        payerId: 'user_1',
-      ),
-      Expense(
-        id: 'e6',
-        title: 'Lunch with Jane',
-        amount: 25.00,
-        category: ExpenseCategory.food,
-        date: DateTime.now().subtract(const Duration(days: 1)),
-        payerId: 'user_1', // John paid
-        splitDetails: <SplitShare>[
-          SplitShare(
-              userId: 'user_1', amount: 12.50, paid: true), // John paid his half to himself
-          SplitShare(userId: 'user_2', amount: 12.50, paid: false), // Jane owes John
-        ],
-      ),
-      Expense(
-        id: 'e7',
-        title: 'House Rent',
-        amount: 900.00,
-        category: ExpenseCategory.housing,
-        date: DateTime.now().subtract(const Duration(days: 7)),
-        payerId: 'user_3', // Bob paid
-        splitDetails: <SplitShare>[
-          SplitShare(userId: 'user_1', amount: 300.0, paid: false), // John owes Bob
-          SplitShare(userId: 'user_2', amount: 300.0, paid: false), // Jane owes Bob
-          SplitShare(
-              userId: 'user_3', amount: 300.0, paid: true), // Bob (payer) has paid his share
-        ],
-      ),
-    ]);
+    // Initialize with empty data - ready for new users
     _dailyLimit = null;
     _monthlyLimit = null;
     _isDailyLimitEnabled = false;
     _isMonthlyLimitEnabled = false;
   }
 
+  /// Load user data when user logs in
+  void loadUserData(String userEmail) {
+    _currentUserEmail = userEmail;
+    
+    // Load expenses
+    final expensesData = StorageService.loadExpenses(userEmail);
+    _expenses.clear();
+    for (final expenseMap in expensesData) {
+      try {
+        _expenses.add(_expenseFromMap(expenseMap));
+      } catch (e) {
+        print('Error loading expense: $e');
+      }
+    }
+    
+    // Load friends
+    final friendsData = StorageService.loadFriends(userEmail);
+    _allUsers.clear();
+    for (final friendMap in friendsData) {
+      try {
+        _allUsers.add(_friendFromMap(friendMap));
+      } catch (e) {
+        print('Error loading friend: $e');
+      }
+    }
+    
+    // Load spending limits
+    final limitsData = StorageService.loadSpendingLimits(userEmail);
+    if (limitsData != null) {
+      _dailyLimit = limitsData['dailyLimit']?.toDouble();
+      _monthlyLimit = limitsData['monthlyLimit']?.toDouble();
+      _isDailyLimitEnabled = limitsData['isDailyLimitEnabled'] ?? false;
+      _isMonthlyLimitEnabled = limitsData['isMonthlyLimitEnabled'] ?? false;
+    }
+    
+    notifyListeners();
+  }
+
+  /// Clear data when user logs out
+  void clearUserData() {
+    _currentUserEmail = null;
+    _expenses.clear();
+    _allUsers.clear();
+    _dailyLimit = null;
+    _monthlyLimit = null;
+    _isDailyLimitEnabled = false;
+    _isMonthlyLimitEnabled = false;
+    notifyListeners();
+  }
+
+  /// Save expenses to SharedPreferences
+  Future<void> _saveExpenses() async {
+    if (_currentUserEmail != null) {
+      final expensesData = _expenses.map((expense) => _expenseToMap(expense)).toList();
+      await StorageService.saveExpenses(_currentUserEmail!, expensesData);
+    }
+  }
+
+  /// Save spending limits to SharedPreferences
+  Future<void> _saveSpendingLimits() async {
+    if (_currentUserEmail != null) {
+      final limitsData = {
+        'dailyLimit': _dailyLimit,
+        'monthlyLimit': _monthlyLimit,
+        'isDailyLimitEnabled': _isDailyLimitEnabled,
+        'isMonthlyLimitEnabled': _isMonthlyLimitEnabled,
+      };
+      await StorageService.saveSpendingLimits(_currentUserEmail!, limitsData);
+    }
+  }
+
   void addExpense(Expense expense) {
     _expenses.add(expense);
+    _saveExpenses();
     notifyListeners();
   }
 
@@ -474,13 +660,108 @@ class ExpenseManager extends ChangeNotifier {
         _expenses.indexWhere((Expense expense) => expense.id == updatedExpense.id);
     if (index != -1) {
       _expenses[index] = updatedExpense;
+      _saveExpenses();
       notifyListeners();
     }
   }
 
   void deleteExpense(String id) {
     _expenses.removeWhere((Expense expense) => expense.id == id);
+    _saveExpenses();
     notifyListeners();
+  }
+
+  /// Update spending limits
+  void updateSpendingLimits({
+    double? dailyLimit,
+    double? monthlyLimit,
+    bool? isDailyLimitEnabled,
+    bool? isMonthlyLimitEnabled,
+  }) {
+    if (dailyLimit != null) _dailyLimit = dailyLimit;
+    if (monthlyLimit != null) _monthlyLimit = monthlyLimit;
+    if (isDailyLimitEnabled != null) _isDailyLimitEnabled = isDailyLimitEnabled;
+    if (isMonthlyLimitEnabled != null) _isMonthlyLimitEnabled = isMonthlyLimitEnabled;
+    
+    _saveSpendingLimits();
+    notifyListeners();
+  }
+
+  /// Convert Expense to Map for storage
+  Map<String, dynamic> _expenseToMap(Expense expense) {
+    return {
+      'id': expense.id,
+      'title': expense.title,
+      'amount': expense.amount,
+      'date': expense.date.toIso8601String(),
+      'category': expense.category.toString(),
+      'payerId': expense.payerId,
+      'receiptImageUrl': expense.receiptImageUrl,
+      'splitDetails': expense.splitDetails.map((split) => {
+        'userId': split.userId,
+        'amount': split.amount,
+        'paid': split.paid,
+      }).toList(),
+    };
+  }
+
+  /// Convert Map to Expense from storage
+  Expense _expenseFromMap(Map<String, dynamic> map) {
+    return Expense(
+      id: map['id'],
+      title: map['title'],
+      amount: map['amount'].toDouble(),
+      date: DateTime.parse(map['date']),
+      category: ExpenseCategory.values.firstWhere(
+        (cat) => cat.toString() == map['category'],
+        orElse: () => ExpenseCategory.other,
+      ),
+      payerId: map['payerId'],
+      receiptImageUrl: map['receiptImageUrl'],
+      splitDetails: (map['splitDetails'] as List<dynamic>?)
+          ?.map((split) => SplitShare(
+                userId: split['userId'],
+                amount: split['amount'].toDouble(),
+                paid: split['paid'] ?? false,
+              ))
+          .toList() ?? [],
+    );
+  }
+
+  /// Save friends to SharedPreferences
+  Future<void> _saveFriends() async {
+    if (_currentUserEmail != null) {
+      final friendsData = _allUsers.map((friend) => _friendToMap(friend)).toList();
+      await StorageService.saveFriends(_currentUserEmail!, friendsData);
+    }
+  }
+
+  /// Convert AppUser (friend) to Map for storage
+  Map<String, dynamic> _friendToMap(AppUser friend) {
+    return {
+      'id': friend.id,
+      'name': friend.name,
+      'username': friend.username,
+      'email': friend.email,
+      'dob': friend.dob?.toIso8601String(),
+      'country': friend.country,
+      'gender': friend.gender,
+      'phoneNumber': friend.phoneNumber,
+    };
+  }
+
+  /// Convert Map to AppUser (friend) from storage
+  AppUser _friendFromMap(Map<String, dynamic> map) {
+    return AppUser(
+      id: map['id'],
+      name: map['name'],
+      username: map['username'],
+      email: map['email'],
+      dob: map['dob'] != null ? DateTime.parse(map['dob']) : null,
+      country: map['country'],
+      gender: map['gender'],
+      phoneNumber: map['phoneNumber'],
+    );
   }
 
   // NEW: Method to add a new AppUser (friend)
@@ -488,6 +769,7 @@ class ExpenseManager extends ChangeNotifier {
     // In a real app, you might want to check for duplicate IDs or emails
     if (!_allUsers.any((AppUser existingUser) => existingUser.id == user.id)) {
       _allUsers.add(user);
+      _saveFriends();
       notifyListeners();
     }
   }
@@ -495,6 +777,7 @@ class ExpenseManager extends ChangeNotifier {
   // NEW: Method to delete an AppUser (friend)
   void deleteAppUser(String userId) {
     _allUsers.removeWhere((AppUser user) => user.id == userId);
+    _saveFriends();
     notifyListeners();
     // NOTE: In a real application, deleting a user would require complex
     // cascading logic to handle their involvement in existing expenses
@@ -596,6 +879,27 @@ class ExpenseManager extends ChangeNotifier {
     return netOwed;
   }
 
+  // Helper function to get the last expense date between current user and another user
+  DateTime? getLastExpenseDateBetween(String currentUserId, String otherUserId) {
+    DateTime? lastDate;
+    
+    for (final Expense expense in _expenses) {
+      // Check if this expense involves both users
+      bool involvesCurrentUser = expense.payerId == currentUserId || 
+          expense.splitDetails.any((split) => split.userId == currentUserId);
+      bool involvesOtherUser = expense.payerId == otherUserId || 
+          expense.splitDetails.any((split) => split.userId == otherUserId);
+      
+      if (involvesCurrentUser && involvesOtherUser) {
+        if (lastDate == null || expense.date.isAfter(lastDate)) {
+          lastDate = expense.date;
+        }
+      }
+    }
+    
+    return lastDate;
+  }
+
   void markSplitShareAsPaid(String expenseId, String userId) {
     final int expenseIndex =
         _expenses.indexWhere((Expense expense) => expense.id == expenseId);
@@ -605,6 +909,7 @@ class ExpenseManager extends ChangeNotifier {
           expense.splitDetails.indexWhere((SplitShare split) => split.userId == userId);
       if (splitIndex != -1) {
         expense.splitDetails[splitIndex].paid = true;
+        _saveExpenses(); // Save the updated payment status to SharedPreferences
         notifyListeners();
       }
     }
@@ -719,7 +1024,12 @@ class ExpenseManager extends ChangeNotifier {
 
 // --- Main App Widget ---
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize SharedPreferences
+  await StorageService.init();
+  
   runApp(
     MultiProvider(
       providers: <ChangeNotifierProvider<ChangeNotifier>>[
@@ -992,18 +1302,33 @@ void main() {
   );
 }
 
-class AuthWrapper extends StatelessWidget {
+class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final AuthManager authManager = Provider.of<AuthManager>(context);
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
 
-    if (authManager.isAuthenticated) {
-      return const MainAppShell();
-    } else {
-      return const AuthScreen();
-    }
+class _AuthWrapperState extends State<AuthWrapper> {
+  @override
+  Widget build(BuildContext context) {
+    return Consumer2<AuthManager, ExpenseManager>(
+      builder: (context, authManager, expenseManager, child) {
+        if (authManager.isAuthenticated && authManager.currentUser != null) {
+          // Load user data when user is authenticated
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            expenseManager.loadUserData(authManager.currentUser!.email);
+          });
+          return const MainAppShell();
+        } else {
+          // Clear data when user is not authenticated
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            expenseManager.clearUserData();
+          });
+          return const AuthScreen();
+        }
+      },
+    );
   }
 }
 
@@ -1021,22 +1346,38 @@ class _AuthScreenState extends State<AuthScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
   bool _isLogin = true;
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
   bool _isLoading = false;
 
+  void _clearForm() {
+    _emailController.clear();
+    _passwordController.clear();
+    _nameController.clear();
+    _usernameController.clear();
+    _confirmPasswordController.clear();
+    _formKey.currentState?.reset();
+    setState(() {
+      _isPasswordVisible = false;
+      _isConfirmPasswordVisible = false;
+      _isLoading = false;
+    });
+  }
+
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _usernameController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  void _authenticate() {
+  void _authenticate() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -1049,10 +1390,11 @@ class _AuthScreenState extends State<AuthScreen> {
     
     try {
       if (_isLogin) {
-        authManager.login(_emailController.text.trim(), _passwordController.text);
+        await authManager.login(_emailController.text.trim(), _passwordController.text);
       } else {
-        authManager.signup(
+        await authManager.signup(
             _nameController.text.trim(), 
+            _usernameController.text.trim(),
             _emailController.text.trim(), 
             _passwordController.text
         );
@@ -1121,6 +1463,27 @@ class _AuthScreenState extends State<AuthScreen> {
     return null;
   }
 
+  // Username validation function
+  String? _validateUsername(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Username is required';
+    }
+    
+    if (value.trim().length < 3) {
+      return 'Username must be at least 3 characters long';
+    }
+    
+    if (value.trim().length > 20) {
+      return 'Username cannot be longer than 20 characters';
+    }
+    
+    if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value.trim())) {
+      return 'Username can only contain letters, numbers, and underscores';
+    }
+    
+    return null;
+  }
+
   // Confirm password validation function
   String? _validateConfirmPassword(String? value) {
     if (value == null || value.isEmpty) {
@@ -1136,262 +1499,396 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenHeight < 700;
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    
     return Scaffold(
       appBar: AppBar(
         title: Text(_isLogin ? 'Login' : 'Sign Up'),
         backgroundColor: Theme.of(context).colorScheme.surface,
       ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: <Widget>[
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Icon(
-                    Icons.account_balance_wallet,
-                    size: 60,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                24.0,
+                isSmallScreen ? 16.0 : 24.0,
+                24.0,
+                keyboardHeight > 0 ? 16.0 : 24.0,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight - (isSmallScreen ? 32.0 : 48.0),
                 ),
-                const SizedBox(height: 24),
-                Text(
-                  'Welcome to SplitMaster',
-                  style: GoogleFonts.inter(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w700,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _isLogin ? 'Sign in to your account' : 'Create your account',
-                  style: GoogleFonts.inter(
-                    fontSize: 16,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                
-                // Name field for signup
-                if (!_isLogin) ...<Widget>[
-                  TextFormField(
-                    controller: _nameController,
-                    decoration: InputDecoration(
-                      labelText: 'Full Name',
-                      hintText: 'Enter your full name',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      prefixIcon: const Icon(Icons.person_outline),
-                    ),
-                    keyboardType: TextInputType.name,
-                    textCapitalization: TextCapitalization.words,
-                    validator: _validateName,
-                    textInputAction: TextInputAction.next,
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                
-                // Email field
-                TextFormField(
-                  controller: _emailController,
-                  decoration: InputDecoration(
-                    labelText: 'Email Address',
-                    hintText: 'Enter your email',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    prefixIcon: const Icon(Icons.email_outlined),
-                  ),
-                  keyboardType: TextInputType.emailAddress,
-                  validator: _validateEmail,
-                  textInputAction: TextInputAction.next,
-                ),
-                const SizedBox(height: 16),
-                
-                // Password field
-                TextFormField(
-                  controller: _passwordController,
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    hintText: _isLogin ? 'Enter your password' : 'Create a strong password',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    prefixIcon: const Icon(Icons.lock_outline),
-                    suffixIcon: IconButton(
-                      onPressed: () {
-                        setState(() {
-                          _isPasswordVisible = !_isPasswordVisible;
-                        });
-                      },
-                      icon: Icon(
-                        _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
-                      ),
-                    ),
-                  ),
-                  obscureText: !_isPasswordVisible,
-                  validator: _isLogin ? (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Password is required';
-                    }
-                    return null;
-                  } : _validatePassword,
-                  textInputAction: _isLogin ? TextInputAction.done : TextInputAction.next,
-                ),
-                
-                // Confirm password field for signup
-                if (!_isLogin) ...<Widget>[
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _confirmPasswordController,
-                    decoration: InputDecoration(
-                      labelText: 'Confirm Password',
-                      hintText: 'Re-enter your password',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      suffixIcon: IconButton(
-                        onPressed: () {
-                          setState(() {
-                            _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
-                          });
-                        },
-                        icon: Icon(
-                          _isConfirmPasswordVisible ? Icons.visibility : Icons.visibility_off,
-                        ),
-                      ),
-                    ),
-                    obscureText: !_isConfirmPasswordVisible,
-                    validator: _validateConfirmPassword,
-                    textInputAction: TextInputAction.done,
-                  ),
-                ],
-                
-                // Password requirements for signup
-                if (!_isLogin) ...<Widget>[
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-                      ),
-                    ),
+                child: IntrinsicHeight(
+                  child: Form(
+                    key: _formKey,
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Password Requirements:',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildPasswordRequirement('At least 8 characters'),
-                        _buildPasswordRequirement('One uppercase letter (A-Z)'),
-                        _buildPasswordRequirement('One lowercase letter (a-z)'),
-                        _buildPasswordRequirement('One number (0-9)'),
-                      ],
-                    ),
-                  ),
-                ],
-                
-                const SizedBox(height: 32),
-                
-                // Login/Signup button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _authenticate,
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 2,
-                    ),
-                    child: _isLoading
-                        ? SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.onPrimary,
-                              ),
-                            ),
-                          )
-                        : Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(_isLogin ? Icons.login : Icons.app_registration),
-                              const SizedBox(width: 8),
-                              Text(
-                                _isLogin ? 'Login' : 'Sign Up',
-                                style: GoogleFonts.inter(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: <Widget>[
+                        // Flexible spacing at top
+                        if (!isSmallScreen) const Spacer(flex: 1),
+                        
+                        // App Logo - Responsive size
+                        Container(
+                          width: isSmallScreen ? 80 : 100,
+                          height: isSmallScreen ? 80 : 100,
+                          margin: EdgeInsets.only(bottom: isSmallScreen ? 16 : 24),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(isSmallScreen ? 16 : 20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 15,
+                                offset: const Offset(0, 3),
                               ),
                             ],
                           ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                
-                // Toggle between login and signup
-                TextButton(
-                  onPressed: _isLoading ? null : () {
-                    setState(() {
-                      _isLogin = !_isLogin;
-                      // Clear form when switching
-                      _emailController.clear();
-                      _passwordController.clear();
-                      _nameController.clear();
-                      _confirmPasswordController.clear();
-                      _formKey.currentState?.reset();
-                    });
-                  },
-                  child: RichText(
-                    text: TextSpan(
-                      text: _isLogin
-                          ? 'Don\'t have an account? '
-                          : 'Already have an account? ',
-                      style: GoogleFonts.inter(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                      children: [
-                        TextSpan(
-                          text: _isLogin ? 'Sign Up' : 'Login',
-                          style: GoogleFonts.inter(
-                            color: Theme.of(context).colorScheme.primary,
-                            fontWeight: FontWeight.w600,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(isSmallScreen ? 16 : 20),
+                            child: Image.asset(
+                              'assets/images/logo.png',
+                              width: isSmallScreen ? 80 : 100,
+                              height: isSmallScreen ? 80 : 100,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  width: isSmallScreen ? 80 : 100,
+                                  height: isSmallScreen ? 80 : 100,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(isSmallScreen ? 16 : 20),
+                                  ),
+                                  child: Icon(
+                                    Icons.account_balance_wallet,
+                                    size: isSmallScreen ? 40 : 50,
+                                    color: Theme.of(context).colorScheme.primary,
+                                  ),
+                                );
+                              },
+                            ),
                           ),
                         ),
+                        
+                        // App Name and Tagline - Responsive text
+                        Column(
+                          children: [
+                            Text(
+                              'Welcome to SplitMaster',
+                              style: GoogleFonts.inter(
+                                fontSize: isSmallScreen ? 22 : 26,
+                                fontWeight: FontWeight.w700,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            SizedBox(height: isSmallScreen ? 4 : 8),
+                            Text(
+                              'Split expenses, track balances, stay organized',
+                              style: GoogleFonts.inter(
+                                fontSize: isSmallScreen ? 12 : 14,
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                        
+                        SizedBox(height: isSmallScreen ? 24 : 32),
+                        
+                        // Form Fields Container
+                        Container(
+                          constraints: BoxConstraints(
+                            maxWidth: screenWidth > 600 ? 400 : double.infinity,
+                          ),
+                          child: Column(
+                            children: [
+                              // Name field for signup
+                              if (!_isLogin) ...<Widget>[
+                                TextFormField(
+                                  controller: _nameController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Full Name',
+                                    hintText: 'Enter your full name',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    prefixIcon: const Icon(Icons.person_outline),
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: isSmallScreen ? 8 : 12, // Reduced vertical padding
+                                    ),
+                                  ),
+                                  keyboardType: TextInputType.name,
+                                  textCapitalization: TextCapitalization.words,
+                                  validator: _validateName,
+                                  textInputAction: TextInputAction.next,
+                                ),
+                                SizedBox(height: isSmallScreen ? 8 : 12), // Reduced spacing
+                                
+                                // Username field for signup
+                                TextFormField(
+                                  controller: _usernameController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Username',
+                                    hintText: 'Choose a unique username',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    prefixIcon: const Icon(Icons.alternate_email),
+                                    helperText: isSmallScreen ? null : 'Only letters, numbers, and underscores allowed',
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: isSmallScreen ? 8 : 12, // Reduced vertical padding
+                                    ),
+                                  ),
+                                  keyboardType: TextInputType.text,
+                                  validator: _validateUsername,
+                                  textInputAction: TextInputAction.next,
+                                ),
+                                SizedBox(height: isSmallScreen ? 8 : 12), // Reduced spacing
+                              ],
+                              
+                              // Email field
+                              TextFormField(
+                                controller: _emailController,
+                                decoration: InputDecoration(
+                                  labelText: 'Email Address',
+                                  hintText: 'Enter your email',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  prefixIcon: const Icon(Icons.email_outlined),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: isSmallScreen ? 8 : 12, // Reduced vertical padding
+                                  ),
+                                ),
+                                keyboardType: TextInputType.emailAddress,
+                                validator: _validateEmail,
+                                textInputAction: TextInputAction.next,
+                              ),
+                              SizedBox(height: isSmallScreen ? 8 : 12), // Reduced spacing
+                              
+                              // Password field
+                              TextFormField(
+                                controller: _passwordController,
+                                decoration: InputDecoration(
+                                  labelText: 'Password',
+                                  hintText: _isLogin ? 'Enter your password' : 'Create a strong password',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  prefixIcon: const Icon(Icons.lock_outline),
+                                  suffixIcon: IconButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _isPasswordVisible = !_isPasswordVisible;
+                                      });
+                                    },
+                                    icon: Icon(
+                                      _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                                    ),
+                                  ),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: isSmallScreen ? 8 : 12, // Reduced vertical padding
+                                  ),
+                                ),
+                                obscureText: !_isPasswordVisible,
+                                validator: _isLogin ? (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Password is required';
+                                  }
+                                  return null;
+                                } : _validatePassword,
+                                textInputAction: _isLogin ? TextInputAction.done : TextInputAction.next,
+                              ),
+                              
+                              // Confirm password field for signup
+                              if (!_isLogin) ...<Widget>[
+                                SizedBox(height: isSmallScreen ? 8 : 12), // Reduced spacing
+                                TextFormField(
+                                  controller: _confirmPasswordController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Confirm Password',
+                                    hintText: 'Re-enter your password',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    prefixIcon: const Icon(Icons.lock_outline),
+                                    suffixIcon: IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        _isConfirmPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                                      ),
+                                    ),
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: isSmallScreen ? 8 : 12, // Reduced vertical padding
+                                    ),
+                                  ),
+                                  obscureText: !_isConfirmPasswordVisible,
+                                  validator: _validateConfirmPassword,
+                                  textInputAction: TextInputAction.done,
+                                ),
+                              ],
+                              
+                              // Password requirements for signup - Only show on larger screens
+                              if (!_isLogin && !isSmallScreen) ...<Widget>[
+                                SizedBox(height: isSmallScreen ? 8 : 12), // Reduced spacing
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Password Requirements:',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      _buildPasswordRequirement('At least 8 characters'),
+                                      _buildPasswordRequirement('At least one uppercase letter'),
+                                      _buildPasswordRequirement('At least one lowercase letter'),
+                                      _buildPasswordRequirement('At least one number'),
+                                      _buildPasswordRequirement('At least one special character'),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              
+                              SizedBox(height: isSmallScreen ? 16 : 20), // Reduced spacing
+                              
+                              // Submit Button
+                              Center(
+                                child: SizedBox(
+                                  width: MediaQuery.of(context).size.width * 0.6, // 60% width (40% reduction)
+                                  height: isSmallScreen ? 32 : 38, // Reduced height by 20%
+                                  child: ElevatedButton(
+                                    onPressed: _isLoading ? null : _authenticate,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Theme.of(context).colorScheme.primary,
+                                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8), // Reduced border radius by 20%
+                                      ),
+                                      elevation: 1, // Reduced elevation
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: isSmallScreen ? 13 : 16, // Reduced padding by 20%
+                                        vertical: isSmallScreen ? 6 : 8, // Reduced padding by 20%
+                                      ),
+                                    ),
+                                    child: _isLoading
+                                        ? SizedBox(
+                                            height: isSmallScreen ? 13 : 14, // Reduced loading indicator size by 20%
+                                            width: isSmallScreen ? 13 : 14,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor: AlwaysStoppedAnimation<Color>(
+                                                Theme.of(context).colorScheme.onPrimary,
+                                              ),
+                                            ),
+                                          )
+                                        : Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            mainAxisSize: MainAxisSize.min, // Prevent overflow
+                                            children: [
+                                              Icon(
+                                                _isLogin ? Icons.login : Icons.person_add,
+                                                size: isSmallScreen ? 13 : 14, // Reduced icon size by 20%
+                                              ),
+                                              SizedBox(width: isSmallScreen ? 5 : 6), // Reduced spacing by 20%
+                                              Flexible(
+                                                child: Text(
+                                                  _isLogin ? 'Login' : 'Sign Up',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: isSmallScreen ? 10 : 12, // Reduced font size by 20%
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                  ),
+                                ),
+                              ),
+                              
+                              SizedBox(height: isSmallScreen ? 12 : 16), // Reduced spacing
+                              
+                              // Toggle between login and signup
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      _isLogin ? "Don't have an account? " : "Already have an account? ",
+                                      style: GoogleFonts.inter(
+                                        fontSize: isSmallScreen ? 12 : 13, // Reduced font size
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _isLogin = !_isLogin;
+                                        _clearForm();
+                                      });
+                                    },
+                                    style: TextButton.styleFrom(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: isSmallScreen ? 4 : 6, // Reduced padding
+                                        vertical: isSmallScreen ? 2 : 4,
+                                      ),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    child: Text(
+                                      _isLogin ? 'Sign Up' : 'Login',
+                                      style: GoogleFonts.inter(
+                                        fontSize: isSmallScreen ? 12 : 13, // Reduced font size
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(context).colorScheme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        
+                        // Flexible spacing at bottom
+                        if (!isSmallScreen) const Spacer(flex: 1),
                       ],
                     ),
                   ),
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -1399,7 +1896,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Widget _buildPasswordRequirement(String requirement) {
     return Padding(
-      padding: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.only(bottom: 4),
       child: Row(
         children: [
           Icon(
@@ -1421,8 +1918,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-// --- Main App Shell (with Bottom Navigation) ---
-
+// Main App Shell with Bottom Navigation
 class MainAppShell extends StatefulWidget {
   const MainAppShell({super.key});
 
@@ -1447,10 +1943,194 @@ class _MainAppShellState extends State<MainAppShell> {
   }
 
   void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-    _pageController.jumpToPage(index);
+    if (index == 2) { // Add button
+      _showAddOptionsBottomSheet(context);
+    } else {
+      setState(() {
+        _selectedIndex = index;
+      });
+      _pageController.jumpToPage(index);
+    }
+  }
+
+  void _showAddOptionsBottomSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: ResponsiveUtils.getResponsiveScreenPadding(context),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Handle bar
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 16, normal: 20)),
+                  
+                  Text(
+                    'Add New',
+                    style: GoogleFonts.inter(
+                      fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 18, normal: 20),
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 20, normal: 24)),
+                  
+                  // Side by side compact tiles
+                  Row(
+                    children: [
+                      // Add Expense Tile
+                      Expanded(
+                        child: Container(
+                          height: ResponsiveUtils.isSmallScreen(context) ? 44 : 50,
+                          margin: EdgeInsets.only(right: ResponsiveUtils.getResponsiveSpacing(context, small: 6, normal: 8)),
+                          child: Material(
+                            borderRadius: BorderRadius.circular(12),
+                            color: const Color(0xFF10B981).withOpacity(0.1),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () {
+                                Navigator.pop(context);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => AddExpenseScreen(
+                                      onSaveAndNavigateBack: () {
+                                        Navigator.pop(context);
+                                        setState(() {
+                                          _selectedIndex = 0;
+                                        });
+                                        _pageController.jumpToPage(0);
+                                      },
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: ResponsiveUtils.getResponsiveSpacing(context, small: 8, normal: 12),
+                                  vertical: ResponsiveUtils.getResponsiveSpacing(context, small: 6, normal: 8),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 24,
+                                      height: 24,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF10B981),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Icon(
+                                        Icons.add_card_rounded,
+                                        color: Colors.white,
+                                        size: 14,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Flexible(
+                                      child: Text(
+                                        'Expense',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: Theme.of(context).colorScheme.onSurface,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // Add Friend Tile
+                      Expanded(
+                        child: Container(
+                          height: 50,
+                          margin: const EdgeInsets.only(left: 8),
+                          child: Material(
+                            borderRadius: BorderRadius.circular(12),
+                            color: const Color(0xFF6366F1).withOpacity(0.1),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () {
+                                Navigator.pop(context);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const FriendsListScreen(),
+                                  ),
+                                );
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 24,
+                                      height: 24,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF6366F1),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Icon(
+                                        Icons.person_add_rounded,
+                                        color: Colors.white,
+                                        size: 14,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Flexible(
+                                      child: Text(
+                                        'Friend',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: Theme.of(context).colorScheme.onSurface,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -1465,13 +2145,9 @@ class _MainAppShellState extends State<MainAppShell> {
         },
         children: <Widget>[
           const HomeScreen(),
-          const InsightsScreen(), // NEW: Insights screen
-          AddExpenseScreen(onSaveAndNavigateBack: () {
-            _pageController.jumpToPage(0); // Go to Home tab
-            setState(() {
-              _selectedIndex = 0; // Update bottom nav bar
-            });
-          }),
+          const InsightsScreen(),
+          const AddPlaceholderScreen(), // Placeholder - not directly accessed
+          const CalendarScreen(),
           const ProfileScreen(),
         ],
       ),
@@ -1485,14 +2161,19 @@ class _MainAppShellState extends State<MainAppShell> {
             label: 'Home',
           ),
           NavigationDestination(
-            icon: Icon(Icons.analytics_outlined), // NEW: Icon for Insights
-            selectedIcon: Icon(Icons.analytics), // NEW: Icon for Insights
-            label: 'Insights', // NEW: Label for Insights
+            icon: Icon(Icons.analytics_outlined),
+            selectedIcon: Icon(Icons.analytics),
+            label: 'Insights',
           ),
           NavigationDestination(
             icon: Icon(Icons.add_circle_outline),
             selectedIcon: Icon(Icons.add_circle),
             label: 'Add',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.calendar_today_outlined),
+            selectedIcon: Icon(Icons.calendar_today),
+            label: 'Calendar',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),
@@ -1519,189 +2200,103 @@ class HomeScreen extends StatelessWidget {
               Provider.of<AuthManager>(context, listen: false);
           final String currentUserId = authManager.currentUser?.id ?? 'unknown_user';
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                // Professional Welcome Header
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: Theme.of(context).brightness == Brightness.dark
-                          ? [
-                              const Color(0xFF4F46E5), // Professional indigo
-                              const Color(0xFF7C3AED), // Professional purple
-                            ]
-                          : [
-                              const Color(0xFFE0E7FF), // Very light indigo
-                              const Color(0xFFF3F4F6), // Light gray
-                            ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveUtils.getResponsivePadding(context, small: 12, normal: 16),
+                vertical: ResponsiveUtils.getResponsivePadding(context, small: 8, normal: 12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 8, normal: 12)),
+                  // Simple Welcome Banner
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveUtils.getResponsivePadding(context, small: 12, normal: 16),
+                      vertical: ResponsiveUtils.getResponsiveSpacing(context, small: 8, normal: 12),
                     ),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Theme.of(context).brightness == Brightness.light
-                        ? Border.all(
-                            color: const Color(0xFF4F46E5).withOpacity(0.1),
-                            width: 1.5,
-                          )
-                        : null,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Theme.of(context).brightness == Brightness.dark
-                            ? const Color(0xFF4F46E5).withOpacity(0.2)
-                            : const Color(0xFF4F46E5).withOpacity(0.08),
-                        offset: const Offset(0, 8),
-                        blurRadius: 24,
-                        spreadRadius: 0,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF1E3A8A).withOpacity(0.2) // Dark mode: deep blue with transparency
+                          : const Color(0xFFDBEAFE), // Light mode: light blue
+                      borderRadius: BorderRadius.circular(16),
+                      border: Theme.of(context).brightness == Brightness.dark
+                          ? Border.all(
+                              color: const Color(0xFF3B82F6).withOpacity(0.3),
+                              width: 1,
+                            )
+                          : Border.all(
+                              color: const Color(0xFF93C5FD),
+                              width: 1,
+                            ),
+                    ),
+                    child: RichText(
+                      text: TextSpan(
+                        style: GoogleFonts.inter(
+                          fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 14, normal: 16),
+                          fontWeight: FontWeight.w400, // Normal weight for "Welcome,"
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.white.withOpacity(0.8)
+                              : const Color(0xFF374151),
+                        ),
+                        children: [
+                          const TextSpan(text: 'Welcome, '),
+                          TextSpan(
+                            text: authManager.currentUser?.username ?? 'Guest',
+                            style: GoogleFonts.inter(
+                              fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 14, normal: 16),
+                              fontWeight: FontWeight.w700, // Bold for username
+                              color: Theme.of(context).brightness == Brightness.dark
+                                  ? const Color(0xFF60A5FA) // Light blue for dark mode
+                                  : const Color(0xFF1E40AF), // Dark blue for light mode
+                            ),
+                          ),
+                        ],
                       ),
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        offset: const Offset(0, 2),
-                        blurRadius: 4,
-                        spreadRadius: 0,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 12, normal: 16)),
+                  OverallSplitSummaryCards(
+                      expenseManager: expenseManager, currentUserId: currentUserId),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 12, normal: 16)),
+                  // NEW: Friends Balances List
+                  FriendsBalancesList(
+                      expenseManager: expenseManager, currentUserId: currentUserId),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 12, normal: 16)),
+                  Row(
+                    children: [
+                      Text(
+                        'Recent Expenses',
+                        style: GoogleFonts.inter(
+                          fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 16, normal: 18),
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute<Widget>(
+                              builder: (context) => const AllExpensesScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.arrow_forward, size: 14),
+                        label: const Text('View All'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.primary,
+                        ),
                       ),
                     ],
                   ),
-                  child: Material(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(24),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(24),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute<Widget>(
-                            builder: (context) => const ProfileScreen(),
-                          ),
-                        );
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).brightness == Brightness.dark
-                                    ? Colors.white.withOpacity(0.15)
-                                    : const Color(0xFF4F46E5).withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Theme.of(context).brightness == Brightness.dark
-                                      ? Colors.white.withOpacity(0.2)
-                                      : const Color(0xFF4F46E5).withOpacity(0.15),
-                                  width: 2,
-                                ),
-                              ),
-                              child: CircleAvatar(
-                                radius: 28,
-                                backgroundColor: Theme.of(context).brightness == Brightness.dark
-                                    ? Colors.white.withOpacity(0.1)
-                                    : const Color(0xFF4F46E5).withOpacity(0.1),
-                                child: Text(
-                                  (authManager.currentUser?.username ?? 'G').substring(0, 1).toUpperCase(),
-                                  style: GoogleFonts.inter(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w700,
-                                    color: Theme.of(context).brightness == Brightness.dark
-                                        ? Colors.white
-                                        : const Color(0xFF4F46E5),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 20),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Welcome back!',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w500,
-                                      color: Theme.of(context).brightness == Brightness.dark
-                                          ? Colors.white.withOpacity(0.9)
-                                          : const Color(0xFF6B7280),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    authManager.currentUser?.username ?? 'Guest',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.w700,
-                                      color: Theme.of(context).brightness == Brightness.dark
-                                          ? Colors.white
-                                          : const Color(0xFF1F2937),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).brightness == Brightness.dark
-                                    ? Colors.white.withOpacity(0.1)
-                                    : const Color(0xFF4F46E5).withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: Icon(
-                                Icons.person_outline_rounded,
-                                color: Theme.of(context).brightness == Brightness.dark
-                                    ? Colors.white.withOpacity(0.9)
-                                    : const Color(0xFF4F46E5),
-                                size: 20,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                OverallSplitSummaryCards(
-                    expenseManager: expenseManager, currentUserId: currentUserId),
-                const SizedBox(height: 24),
-                // NEW: Friends Balances List
-                FriendsBalancesList(
-                    expenseManager: expenseManager, currentUserId: currentUserId),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Text(
-                      'Recent Expenses',
-                      style: GoogleFonts.inter(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute<Widget>(
-                            builder: (context) => const AllExpensesScreen(),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.arrow_forward, size: 16),
-                      label: const Text('View All'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                RecentExpensesList(expenseManager: expenseManager),
-              ],
+                  SizedBox(height: ResponsiveUtils.getResponsiveSpacing(context, small: 8, normal: 12)),
+                  RecentExpensesList(expenseManager: expenseManager),
+                ],
+              ),
             ),
           );
         },
@@ -1737,38 +2332,43 @@ class OverallSplitSummaryCards extends StatelessWidget {
     final double totalIOwe = owingToOthers.fold(
         0.0, (double sum, MapEntry<String, double> entry) => sum + entry.value.abs());
 
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      crossAxisSpacing: 16,
-      mainAxisSpacing: 16,
+    // Use responsive design based on screen size
+    final cardSpacing = ResponsiveUtils.getResponsiveSpacing(context, small: 12, normal: 16);
+    
+    return Row(
       children: <Widget>[
-        _buildSummaryCard(
-          context,
-          'You Owe',
-          '₹${totalIOwe.toStringAsFixed(2)}',
-          Icons.trending_down_rounded,
-          const Color(0xFFFF6B6B), // Soft red
-          false, // isOwedToMe: false (I owe)
+        Expanded(
+          child: _buildSummaryTile(
+            context,
+            'You Owe',
+            ResponsiveUtils.formatAmountWithK(totalIOwe),
+            Icons.trending_down_rounded,
+            const Color(0xFFFF6B6B), // Soft red
+            false, // isOwedToMe: false (I owe)
+          ),
         ),
-        _buildSummaryCard(
-          context,
-          'You Are Owed',
-          '₹${totalOwedToMe.toStringAsFixed(2)}',
-          Icons.trending_up_rounded,
-          const Color(0xFF10B981), // Soft green
-          true, // isOwedToMe: true (Others owe me)
+        SizedBox(width: cardSpacing),
+        Expanded(
+          child: _buildSummaryTile(
+            context,
+            'You Are Owed',
+            ResponsiveUtils.formatAmountWithK(totalOwedToMe),
+            Icons.trending_up_rounded,
+            const Color(0xFF10B981), // Soft green
+            true, // isOwedToMe: true (Others owe me)
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildSummaryCard(BuildContext context, String title, String value,
+  Widget _buildSummaryTile(BuildContext context, String title, String value,
       IconData icon, Color accentColor, bool isOwedToMe) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final isSmallScreen = ResponsiveUtils.isSmallScreen(context);
     
     return Container(
+      padding: EdgeInsets.all(isSmallScreen ? 10 : 14),
       decoration: BoxDecoration(
         color: isDark 
             ? Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3)
@@ -1811,62 +2411,71 @@ class OverallSplitSummaryCards extends StatelessWidget {
               ),
             );
           },
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: <Widget>[
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: accentColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        icon,
-                        color: accentColor,
-                        size: 24,
-                      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              // Top row with icon and arrow
+              Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(isSmallScreen ? 6 : 8),
+                    decoration: BoxDecoration(
+                      color: accentColor.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        size: 14,
-                      ),
+                    child: Icon(
+                      icon,
+                      color: accentColor,
+                      size: isSmallScreen ? 16 : 20,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  title,
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
+                  const Spacer(),
+                  Container(
+                    padding: EdgeInsets.all(isSmallScreen ? 4 : 6),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      size: isSmallScreen ? 10 : 12,
+                    ),
+                  ),
+                ],
+              ),
+              
+              SizedBox(height: isSmallScreen ? 8 : 12),
+              
+              // Title
+              Text(
+                title,
+                style: GoogleFonts.inter(
+                  fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 10, normal: 12),
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(height: 6),
-                Text(
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              
+              SizedBox(height: isSmallScreen ? 2 : 4),
+              
+              // Amount
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
                   value,
                   style: GoogleFonts.inter(
-                    fontSize: 26,
+                    fontSize: isSmallScreen ? 16 : 20,
                     fontWeight: FontWeight.w700,
                     color: accentColor,
                     height: 1.1,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1890,13 +2499,20 @@ class FriendsBalancesList extends StatelessWidget {
     final Map<String, double> netOwed =
         expenseManager.getOwedAmounts(currentUserId);
 
-    // Now showing all friends, regardless of balance
-    final List<AppUser> friendsToDisplay = expenseManager.allUsers
+    // Show only top 5 friends sorted by amount (highest amounts first)
+    final List<AppUser> allFriends = expenseManager.allUsers
         .where((AppUser user) => user.id != currentUserId) // Exclude current user
         .toList();
 
-    // Sort friends for consistent display, e.g., alphabetically by username
-    friendsToDisplay.sort((AppUser a, AppUser b) => a.username.compareTo(b.username));
+    // Sort friends by balance amount (descending - highest amounts first)
+    allFriends.sort((AppUser a, AppUser b) {
+      final double balanceA = (netOwed[a.id] ?? 0.0).abs();
+      final double balanceB = (netOwed[b.id] ?? 0.0).abs();
+      return balanceB.compareTo(balanceA); // Descending order
+    });
+
+    // Take only top 5 friends
+    final List<AppUser> friendsToDisplay = allFriends.take(5).toList();
 
     return Container(
       decoration: BoxDecoration(
@@ -1920,29 +2536,32 @@ class FriendsBalancesList extends StatelessWidget {
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.all(20.0),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveUtils.getResponsivePadding(context, small: 12, normal: 16),
+          vertical: ResponsiveUtils.getResponsivePadding(context, small: 10, normal: 14),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: EdgeInsets.all(ResponsiveUtils.getResponsiveSpacing(context, small: 4, normal: 6)),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(6),
                   ),
                   child: Icon(
                     Icons.people_outline,
                     color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    size: 20,
+                    size: ResponsiveUtils.isSmallScreen(context) ? 14 : 16,
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveUtils.getResponsiveSpacing(context, small: 6, normal: 10)),
                 Text(
-                  'Friends & Balances',
+                  'Split Overview',
                   style: GoogleFonts.inter(
-                    fontSize: 18,
+                    fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 14, normal: 16),
                     fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
@@ -1953,7 +2572,7 @@ class FriendsBalancesList extends StatelessWidget {
                     Navigator.push(
                       context,
                       MaterialPageRoute<Widget>(
-                        builder: (BuildContext context) => const FriendsListScreen(),
+                        builder: (BuildContext context) => const AllSplitsScreen(),
                       ),
                     );
                   },
@@ -1966,13 +2585,13 @@ class FriendsBalancesList extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             if (friendsToDisplay.isEmpty)
               Container(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
                   ),
@@ -1981,23 +2600,23 @@ class FriendsBalancesList extends StatelessWidget {
                   children: [
                     Icon(
                       Icons.person_add_outlined,
-                      size: 48,
+                      size: 36,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     Text(
                       'No friends added yet',
                       style: GoogleFonts.inter(
-                        fontSize: 16,
+                        fontSize: 14,
                         fontWeight: FontWeight.w500,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
                       'Add friends to start splitting expenses together',
                       style: GoogleFonts.inter(
-                        fontSize: 14,
+                        fontSize: 12,
                         color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
                       ),
                       textAlign: TextAlign.center,
@@ -2020,105 +2639,107 @@ class FriendsBalancesList extends StatelessWidget {
 
                   String balanceText;
                   Color balanceColor;
-                  IconData balanceIcon;
+                  Color amountColor;
+                  bool isSettled = balance == 0.0;
 
-                  if (balance == 0.0) {
-                    balanceText = 'Settled';
+                  if (isSettled) {
+                    final DateTime? lastExpenseDate = expenseManager.getLastExpenseDateBetween(currentUserId, friend.id);
+                    if (lastExpenseDate != null) {
+                      balanceText = 'Settled on ${DateFormat('MMM d').format(lastExpenseDate)}';
+                    } else {
+                      balanceText = 'Settled';
+                    }
                     balanceColor = Theme.of(context).colorScheme.onSurfaceVariant;
-                    balanceIcon = Icons.check_circle_outline;
+                    amountColor = Theme.of(context).colorScheme.onSurfaceVariant;
                   } else {
                     final bool youOwe = balance < 0;
-                    final String balancePrefix = youOwe ? 'You owe' : 'Owes you';
-                    balanceText =
-                        '${balancePrefix} ₹${balance.abs().toStringAsFixed(2)}';
-                    balanceColor = youOwe ? 
-                        (Theme.of(context).brightness == Brightness.dark
-                            ? const Color(0xFFF87171) // Brighter red for dark theme
-                            : const Color(0xFFFF6B6B)) : 
-                        (Theme.of(context).brightness == Brightness.dark
-                            ? const Color(0xFF4ADE80) // Brighter green for dark theme
-                            : const Color(0xFF00D2FF));
-                    balanceIcon = youOwe ? Icons.arrow_upward : Icons.arrow_downward;
+                    balanceText = youOwe ? 'You owe' : 'Owes you';
+                    balanceColor = youOwe ? const Color(0xFFFF6B6B) : const Color(0xFF10B981);
+                    amountColor = youOwe ? const Color(0xFFFF6B6B) : const Color(0xFF10B981);
                   }
 
-                  return Container(
-                    margin: const EdgeInsets.symmetric(vertical: 8),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute<Widget>(
-                            builder: (BuildContext context) => SplitDetailScreen(
-                              currentUserId: currentUserId,
-                              otherUserId: friend.id,
-                            ),
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute<Widget>(
+                          builder: (BuildContext context) => SplitDetailScreen(
+                            currentUserId: currentUserId,
+                            otherUserId: friend.id,
                           ),
-                        );
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 24,
-                              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                              backgroundImage: friend.profileImageUrl != null
-                                  ? NetworkImage(friend.profileImageUrl!)
-                                  : null,
-                              child: friend.profileImageUrl == null
-                                  ? Text(
-                                      friend.username.substring(0, 1).toUpperCase(),
-                                      style: GoogleFonts.inter(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                                      ),
-                                    )
-                                  : null,
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    friend.username,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w500,
-                                      color: Theme.of(context).colorScheme.onSurface,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        balanceIcon,
-                                        size: 14,
-                                        color: balanceColor,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        balanceText,
-                                        style: GoogleFonts.inter(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: balanceColor,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                        ),
+                      );
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                      child: Row(
+                        children: [
+                          // Friend Avatar
+                          CircleAvatar(
+                            radius: 20,
+                            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                            child: Text(
+                              ProfileUtils.getInitials(friend.name),
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Theme.of(context).colorScheme.onPrimaryContainer,
                               ),
                             ),
-                            Icon(
-                              Icons.chevron_right,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          
+                          // Friend Name and Status
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  friend.username,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context).colorScheme.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      isSettled 
+                                          ? Icons.check_circle_outline 
+                                          : (balance < 0 ? Icons.arrow_upward : Icons.arrow_downward),
+                                      size: 13,
+                                      color: balanceColor,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      balanceText,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        color: balanceColor,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                          
+                          // Amount
+                          Text(
+                            isSettled
+                                ? ''
+                                : ResponsiveUtils.formatAmountWithK(balance.abs()),
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: amountColor,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   );
@@ -2132,38 +2753,959 @@ class FriendsBalancesList extends StatelessWidget {
 }
 
 // --- NEW: Insights Screen ---
-class InsightsScreen extends StatelessWidget {
+class InsightsScreen extends StatefulWidget {
   const InsightsScreen({super.key});
+
+  @override
+  _InsightsScreenState createState() => _InsightsScreenState();
+}
+
+class _InsightsScreenState extends State<InsightsScreen> {
+  bool isMonthlyView = true; // Toggle between monthly and weekly view
+  int? tappedBarIndex; // Track which bar is tapped in weekly view
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Insights & Trends'),
-      ),
-      body: Consumer<ExpenseManager>(
-        builder: (BuildContext context, ExpenseManager expenseManager, Widget? child) {
-          final AuthManager authManager =
-              Provider.of<AuthManager>(context, listen: false);
-          final String currentUserId = authManager.currentUser?.id ?? 'unknown_user';
+      body: SafeArea(
+        child: Consumer<ExpenseManager>(
+          builder: (BuildContext context, ExpenseManager expenseManager, Widget? child) {
+            final AuthManager authManager = Provider.of<AuthManager>(context, listen: false);
+            final String currentUserId = authManager.currentUser?.id ?? 'unknown_user';
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                DashboardSummaryCards(
-                    expenseManager: expenseManager, currentUserId: currentUserId),
-                const SizedBox(height: 24),
-                ExpensesByCategoryChart(expenseManager: expenseManager),
-                const SizedBox(height: 24),
-                MonthlySpendTrendChart(expenseManager: expenseManager),
-              ],
-            ),
-          );
-        },
+            return SingleChildScrollView(
+              padding: ResponsiveUtils.getResponsiveScreenPadding(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 16, normal: 20)),
+                  
+                  // Header
+                  Text(
+                    'Financial Insights',
+                    style: GoogleFonts.inter(
+                      fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 24, normal: 28),
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveUtils.getResponsiveSpacing(context, small: 6, normal: 8)),
+                  Text(
+                    'Track your spending patterns and financial health',
+                    style: GoogleFonts.inter(
+                      fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 14, normal: 16),
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 24, normal: 32)),
+
+                  // 1. Spending Summary
+                  _buildSummarySection(context, expenseManager, currentUserId),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 24, normal: 32)),
+
+                  // 2. Monthly/Weekly Spending Graph with Toggle
+                  _buildSpendingOverviewChart(context, expenseManager, currentUserId),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 24, normal: 32)),
+
+                  // 3. Spending by Category (smaller chart)
+                  _buildCategoryAnalysisChart(context, expenseManager),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 24, normal: 32)),
+
+                  // 4. Top Spending Categories
+                  _buildTopCategoriesSection(context, expenseManager),
+                  SizedBox(height: ResponsiveUtils.getResponsivePadding(context, small: 20, normal: 24)),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
+  }
+
+  Widget _buildSummarySection(BuildContext context, ExpenseManager expenseManager, String currentUserId) {
+    final DateTime now = DateTime.now();
+    final double todaySpend = expenseManager.getCurrentDailyPersonalSpend(now, currentUserId);
+    final double monthSpend = expenseManager.getCurrentMonthlyPersonalSpend(now, currentUserId);
+    final double weekSpend = _getWeeklySpend(expenseManager, currentUserId);
+    final double avgDaily = now.day > 0 ? monthSpend / now.day : 0.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Spending Summary',
+          style: GoogleFonts.inter(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
+        SizedBox(height: ResponsiveUtils.getResponsiveSpacing(context)),
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: ResponsiveUtils.isTablet(context) ? 4 : 2,
+          crossAxisSpacing: ResponsiveUtils.getResponsiveSpacing(context, small: 8, normal: 12),
+          mainAxisSpacing: ResponsiveUtils.getResponsiveSpacing(context, small: 8, normal: 12),
+          childAspectRatio: ResponsiveUtils.isSmallScreen(context) ? 1.1 : 1.2,
+          children: [
+            _buildSummaryCard(
+              context,
+              'Today',
+              todaySpend >= 10000 
+                  ? ResponsiveUtils.formatAmountWithK(todaySpend)
+                  : '₹${todaySpend.toStringAsFixed(0)}',
+              Icons.today_outlined,
+              const Color(0xFF3B82F6),
+              const Color(0xFFEBF4FF),
+            ),
+            _buildSummaryCard(
+              context,
+              'This Week',
+              weekSpend >= 10000
+                  ? ResponsiveUtils.formatAmountWithK(weekSpend)
+                  : '₹${weekSpend.toStringAsFixed(0)}',
+              Icons.date_range_outlined,
+              const Color(0xFF10B981),
+              const Color(0xFFECFDF5),
+            ),
+            _buildSummaryCard(
+              context,
+              'This Month',
+              monthSpend >= 10000
+                  ? ResponsiveUtils.formatAmountWithK(monthSpend)
+                  : '₹${monthSpend.toStringAsFixed(0)}',
+              Icons.calendar_month_outlined,
+              const Color(0xFF8B5CF6),
+              const Color(0xFFF3F4F6),
+            ),
+            _buildSummaryCard(
+              context,
+              'Daily Average',
+              avgDaily >= 10000
+                  ? ResponsiveUtils.formatAmountWithK(avgDaily)
+                  : '₹${avgDaily.toStringAsFixed(0)}',
+              Icons.trending_up_outlined,
+              const Color(0xFFF59E0B),
+              const Color(0xFFFEF3C7),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSummaryCard(BuildContext context, String title, String value, IconData icon, Color iconColor, Color bgColor) {
+    final isSmallScreen = ResponsiveUtils.isSmallScreen(context);
+    final cardPadding = ResponsiveUtils.getResponsivePadding(context, small: 12, normal: 16);
+    
+    return Container(
+      padding: EdgeInsets.all(cardPadding),
+      decoration: BoxDecoration(
+        color: bgColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: iconColor.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisSize: MainAxisSize.min, // Prevent overflow
+        children: [
+          Container(
+            width: isSmallScreen ? 32 : 40,
+            height: isSmallScreen ? 32 : 40,
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              icon, 
+              color: iconColor, 
+              size: isSmallScreen ? 16 : 20,
+            ),
+          ),
+          SizedBox(height: isSmallScreen ? 6 : 8),
+          Flexible(
+            child: Text(
+              title,
+              style: GoogleFonts.inter(
+                fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 10, normal: 11),
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          SizedBox(height: isSmallScreen ? 1 : 2),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                style: GoogleFonts.inter(
+                  fontSize: isSmallScreen ? 14 : 18,
+                  fontWeight: FontWeight.w700,
+                  color: iconColor,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSpendingOverviewChart(BuildContext context, ExpenseManager expenseManager, String currentUserId) {
+    final Map<String, double> monthlyData = isMonthlyView 
+        ? _getMonthlySpendingData(expenseManager, currentUserId)
+        : _getWeeklyTrendData(expenseManager, currentUserId);
+    
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.bar_chart, color: const Color(0xFF6366F1), size: 24),
+              const SizedBox(width: 12),
+              Text(
+                isMonthlyView ? 'Monthly Spending Trend' : 'Weekly Spending Pattern',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Toggle Button below the title
+          Row(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildToggleButton('Monthly', isMonthlyView, () {
+                      setState(() {
+                        isMonthlyView = true;
+                      });
+                    }),
+                    _buildToggleButton('Weekly', !isMonthlyView, () {
+                      setState(() {
+                        isMonthlyView = false;
+                      });
+                    }),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 200,
+            child: monthlyData.isEmpty 
+              ? Center(
+                  child: Text(
+                    'No spending data available',
+                    style: GoogleFonts.inter(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
+                )
+              : isMonthlyView 
+                ? LineChart(
+                    LineChartData(
+                      lineTouchData: LineTouchData(
+                        enabled: true,
+                        touchTooltipData: LineTouchTooltipData(
+                          tooltipBgColor: const Color(0xFF6366F1),
+                          tooltipPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          tooltipMargin: 8,
+                          tooltipRoundedRadius: 8,
+                          getTooltipItems: (List<LineBarSpot> touchedSpots) {
+                            return touchedSpots.map((LineBarSpot touchedSpot) {
+                              final value = touchedSpot.y;
+                              return LineTooltipItem(
+                                value >= 1000 
+                                  ? ResponsiveUtils.formatAmountWithK(value)
+                                  : '₹${value.toStringAsFixed(0)}',
+                                GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              );
+                            }).toList();
+                          },
+                        ),
+                        handleBuiltInTouches: true,
+                        getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
+                          return spotIndexes.map((index) {
+                            return TouchedSpotIndicatorData(
+                              FlLine(
+                                color: const Color(0xFF6366F1).withOpacity(0.5),
+                                strokeWidth: 2,
+                                dashArray: [5, 5],
+                              ),
+                              FlDotData(
+                                show: true,
+                                getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(
+                                  radius: 6,
+                                  color: const Color(0xFF6366F1),
+                                  strokeWidth: 3,
+                                  strokeColor: Colors.white,
+                                ),
+                              ),
+                            );
+                          }).toList();
+                        },
+                      ),
+                      gridData: FlGridData(
+                        show: true,
+                        drawVerticalLine: false,
+                        horizontalInterval: 1000,
+                        getDrawingHorizontalLine: (value) => FlLine(
+                          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+                          strokeWidth: 1,
+                        ),
+                      ),
+                      titlesData: FlTitlesData(
+                        leftTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 60,
+                            getTitlesWidget: (value, meta) {
+                              if (value >= 1000) {
+                                return Text(
+                                  ResponsiveUtils.formatAmountWithK(value),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  ),
+                                );
+                              }
+                              return Text(
+                                '₹${value.toInt()}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 10,
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            getTitlesWidget: (value, meta) {
+                              final months = monthlyData.keys.toList();
+                              if (value.toInt() < months.length) {
+                                return Text(
+                                  months[value.toInt()],
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  ),
+                                );
+                              }
+                              return const Text('');
+                            },
+                          ),
+                        ),
+                        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                      ),
+                      borderData: FlBorderData(show: false),
+                      lineBarsData: [
+                        LineChartBarData(
+                          spots: monthlyData.entries.map((e) => FlSpot(
+                            monthlyData.keys.toList().indexOf(e.key).toDouble(),
+                            e.value,
+                          )).toList(),
+                          isCurved: true,
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                          ),
+                          barWidth: 3,
+                          belowBarData: BarAreaData(
+                            show: true,
+                            gradient: LinearGradient(
+                              colors: [
+                                const Color(0xFF6366F1).withOpacity(0.3),
+                                const Color(0xFF8B5CF6).withOpacity(0.1),
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                          ),
+                          dotData: FlDotData(
+                            show: true,
+                            getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(
+                              radius: 4,
+                              color: const Color(0xFF6366F1),
+                              strokeWidth: 2,
+                              strokeColor: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : BarChart(
+                    BarChartData(
+                      alignment: BarChartAlignment.spaceAround,
+                      maxY: monthlyData.values.isNotEmpty ? monthlyData.values.reduce((a, b) => a > b ? a : b) * 1.2 : 100,
+                      barTouchData: BarTouchData(
+                        enabled: true,
+                        touchCallback: (FlTouchEvent event, barTouchResponse) {
+                          setState(() {
+                            if (event is FlTapUpEvent && barTouchResponse != null && barTouchResponse.spot != null) {
+                              tappedBarIndex = barTouchResponse.spot!.touchedBarGroupIndex;
+                            } else if (event is FlPanEndEvent || event is FlLongPressEnd) {
+                              tappedBarIndex = null;
+                            }
+                          });
+                        },
+                        touchTooltipData: BarTouchTooltipData(
+                          tooltipBgColor: const Color(0xFF6366F1),
+                          tooltipPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          tooltipMargin: 8,
+                          tooltipRoundedRadius: 8,
+                          getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                            final entries = monthlyData.entries.toList();
+                            if (groupIndex < entries.length) {
+                              final value = entries[groupIndex].value;
+                              return BarTooltipItem(
+                                value >= 1000 
+                                  ? ResponsiveUtils.formatAmountWithK(value)
+                                  : '₹${value.toStringAsFixed(0)}',
+                                GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              );
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                      titlesData: FlTitlesData(
+                        leftTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 50,
+                            getTitlesWidget: (value, meta) {
+                              if (value >= 1000) {
+                                return Text(
+                                  ResponsiveUtils.formatAmountWithK(value),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  ),
+                                );
+                              }
+                              return Text(
+                                '₹${value.toInt()}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 10,
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            getTitlesWidget: (value, meta) {
+                              final days = monthlyData.keys.toList();
+                              if (value.toInt() < days.length) {
+                                return Text(
+                                  days[value.toInt()],
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  ),
+                                );
+                              }
+                              return const Text('');
+                            },
+                          ),
+                        ),
+                        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                      ),
+                      borderData: FlBorderData(show: false),
+                      gridData: FlGridData(
+                        show: true,
+                        drawVerticalLine: false,
+                        getDrawingHorizontalLine: (value) => FlLine(
+                          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+                          strokeWidth: 1,
+                        ),
+                      ),
+                      barGroups: monthlyData.entries.map((entry) {
+                        final index = monthlyData.keys.toList().indexOf(entry.key);
+                        final isTapped = tappedBarIndex == index;
+                        return BarChartGroupData(
+                          x: index,
+                          barRods: [
+                            BarChartRodData(
+                              toY: entry.value,
+                              gradient: LinearGradient(
+                                colors: isTapped 
+                                  ? [const Color(0xFF8B5CF6), const Color(0xFF6366F1)]
+                                  : [const Color(0xFF6366F1), const Color(0xFF8B5CF6)],
+                                begin: Alignment.bottomCenter,
+                                end: Alignment.topCenter,
+                              ),
+                              width: isTapped ? 28 : 24,
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(6),
+                                topRight: Radius.circular(6),
+                              ),
+                            ),
+                          ],
+                          showingTooltipIndicators: isTapped ? [0] : [],
+                        );
+                      }).toList(),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToggleButton(String text, bool isSelected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected 
+              ? Theme.of(context).colorScheme.primary
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          text,
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: isSelected 
+                ? Theme.of(context).colorScheme.onPrimary
+                : Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryAnalysisChart(BuildContext context, ExpenseManager expenseManager) {
+    final Map<ExpenseCategory, double> categorySums = expenseManager.getTotalSpendByCategory();
+    final double total = categorySums.values.fold(0.0, (sum, amount) => sum + amount);
+
+    if (total == 0) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 20,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Text(
+            'No category data available',
+            style: GoogleFonts.inter(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final List<PieChartSectionData> sections = [];
+    final List<Color> colors = [
+      const Color(0xFF3B82F6), const Color(0xFF10B981), const Color(0xFFF59E0B),
+      const Color(0xFFEF4444), const Color(0xFF8B5CF6), const Color(0xFF06B6D4),
+      const Color(0xFFEC4899), const Color(0xFF84CC16), const Color(0xFFF97316),
+    ];
+
+    int index = 0;
+    for (final entry in categorySums.entries) {
+      if (entry.value > 0) {
+        final percentage = (entry.value / total) * 100;
+        sections.add(
+          PieChartSectionData(
+            color: colors[index % colors.length],
+            value: entry.value,
+            title: percentage > 8 ? '${percentage.toStringAsFixed(1)}%' : '',
+            radius: 45, // Reduced from 60 to make chart smaller and rounder
+            titleStyle: GoogleFonts.inter(
+              fontSize: 11, // Reduced font size
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        );
+        index++;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.pie_chart, color: const Color(0xFF10B981), size: 24),
+              const SizedBox(width: 12),
+              Text(
+                'Spending by Category',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: SizedBox(
+                  height: 180, // Reduced height from default
+                  child: PieChart(
+                    PieChartData(
+                      sections: sections,
+                      sectionsSpace: 2, // Reduced section space
+                      centerSpaceRadius: 35, // Reduced center space for smaller, rounder chart
+                      startDegreeOffset: -90,
+                      borderData: FlBorderData(show: false),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 24),
+              Expanded(
+                flex: 1,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: categorySums.entries
+                      .where((entry) => entry.value > 0)
+                      .take(6)
+                      .map((entry) {
+                    final categoryIndex = categorySums.keys.toList().indexOf(entry.key);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8), // Reduced padding
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 10, // Reduced size
+                            height: 10, // Reduced size
+                            decoration: BoxDecoration(
+                              color: colors[categoryIndex % colors.length],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(width: 6), // Reduced spacing
+                          Expanded(
+                            child: Text(
+                              entry.key.displayName,
+                              style: GoogleFonts.inter(
+                                fontSize: 11, // Reduced font size
+                                fontWeight: FontWeight.w500,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopCategoriesSection(BuildContext context, ExpenseManager expenseManager) {
+    final Map<ExpenseCategory, double> categorySums = expenseManager.getTotalSpendByCategory();
+    final List<MapEntry<ExpenseCategory, double>> sortedCategories = categorySums.entries
+        .where((entry) => entry.value > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final topCategories = sortedCategories.take(5).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.trending_up, color: const Color(0xFFEF4444), size: 24),
+              const SizedBox(width: 12),
+              Text(
+                'Top Spending Categories',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          ...topCategories.map((entry) {
+            final total = categorySums.values.fold(0.0, (sum, amount) => sum + amount);
+            final percentage = total > 0 ? (entry.value / total) * 100 : 0;
+            final colors = [
+              const Color(0xFF3B82F6), const Color(0xFF10B981), const Color(0xFFF59E0B),
+              const Color(0xFFEF4444), const Color(0xFF8B5CF6),
+            ];
+            final colorIndex = topCategories.indexOf(entry);
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: colors[colorIndex].withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          entry.key.icon,
+                          color: colors[colorIndex],
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              entry.key.displayName,
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${percentage.toStringAsFixed(1)}% of total spending',
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '₹${entry.value.toStringAsFixed(0)}',
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: colors[colorIndex],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: percentage / 100,
+                      backgroundColor: colors[colorIndex].withOpacity(0.1),
+                      valueColor: AlwaysStoppedAnimation<Color>(colors[colorIndex]),
+                      minHeight: 6,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ],
+      ),
+    );
+  }
+
+  double _getWeeklySpend(ExpenseManager expenseManager, String currentUserId) {
+    final DateTime now = DateTime.now();
+    // Calculate Monday of current week at start of day (00:00:00)
+    final int currentWeekday = now.weekday;
+    final DateTime monday = DateTime(now.year, now.month, now.day).subtract(Duration(days: currentWeekday - 1));
+    final DateTime sunday = monday.add(const Duration(days: 6, hours: 23, minutes: 59, seconds: 59));
+    
+    double totalWeeklySpend = 0.0;
+    
+    for (final expense in expenseManager.expenses) {
+      if (expense.date.isAfter(monday.subtract(const Duration(seconds: 1))) && 
+          expense.date.isBefore(sunday.add(const Duration(seconds: 1)))) {
+        
+        // Calculate user's share of this expense
+        if (expense.splitDetails.isEmpty) {
+          // No split details - if user paid, they bear full cost
+          if (expense.payerId == currentUserId) {
+            totalWeeklySpend += expense.amount;
+          }
+        } else {
+          // Has split details - find user's share
+          final userSplit = expense.splitDetails.firstWhere(
+            (split) => split.userId == currentUserId,
+            orElse: () => SplitShare(userId: currentUserId, amount: 0.0),
+          );
+          totalWeeklySpend += userSplit.amount;
+        }
+      }
+    }
+    
+    return totalWeeklySpend;
+  }
+
+  Map<String, double> _getMonthlySpendingData(ExpenseManager expenseManager, String currentUserId) {
+    final Map<String, double> monthlyData = {};
+    final DateTime now = DateTime.now();
+    
+    // Get last 6 months of data
+    for (int i = 5; i >= 0; i--) {
+      final DateTime targetMonth = DateTime(now.year, now.month - i, 1);
+      final String monthKey = DateFormat('MMM').format(targetMonth);
+      
+      double monthSpend = 0.0;
+      
+      for (final expense in expenseManager.expenses) {
+        if (expense.date.year == targetMonth.year && 
+            expense.date.month == targetMonth.month) {
+          
+          // Calculate user's share of this expense
+          if (expense.splitDetails.isEmpty) {
+            // No split details - if user paid, they bear full cost
+            if (expense.payerId == currentUserId) {
+              monthSpend += expense.amount;
+            }
+          } else {
+            // Has split details - find user's share
+            final userSplit = expense.splitDetails.firstWhere(
+              (split) => split.userId == currentUserId,
+              orElse: () => SplitShare(userId: currentUserId, amount: 0.0),
+            );
+            monthSpend += userSplit.amount;
+          }
+        }
+      }
+      
+      monthlyData[monthKey] = monthSpend;
+    }
+    
+    return monthlyData;
+  }
+
+  Map<String, double> _getWeeklyTrendData(ExpenseManager expenseManager, String currentUserId) {
+    final Map<String, double> weeklyData = {};
+    final DateTime now = DateTime.now();
+    
+    // Calculate Monday of current week (Monday = 1, Sunday = 7)
+    final int currentWeekday = now.weekday;
+    final DateTime monday = now.subtract(Duration(days: currentWeekday - 1));
+    
+    // Get current week's data (Monday to Sunday)
+    for (int i = 0; i < 7; i++) {
+      final DateTime targetDay = monday.add(Duration(days: i));
+      final String dayKey = DateFormat('E').format(targetDay); // Mon, Tue, Wed, etc.
+      
+      double daySpend = 0.0;
+      
+      for (final expense in expenseManager.expenses) {
+        if (expense.date.year == targetDay.year && 
+            expense.date.month == targetDay.month && 
+            expense.date.day == targetDay.day) {
+          
+          // Calculate user's share of this expense
+          if (expense.splitDetails.isEmpty) {
+            // No split details - if user paid, they bear full cost
+            if (expense.payerId == currentUserId) {
+              daySpend += expense.amount;
+            }
+          } else {
+            // Has split details - find user's share
+            final userSplit = expense.splitDetails.firstWhere(
+              (split) => split.userId == currentUserId,
+              orElse: () => SplitShare(userId: currentUserId, amount: 0.0),
+            );
+            daySpend += userSplit.amount;
+          }
+        }
+      }
+      
+      weeklyData[dayKey] = daySpend;
+    }
+    
+    return weeklyData;
   }
 }
 
@@ -2204,13 +3746,13 @@ class DashboardSummaryCards extends StatelessWidget {
         _buildSummaryCard(
             context,
             'Today',
-            '₹${todayPersonalSpend.toStringAsFixed(2)}',
+            ResponsiveUtils.formatAmountWithK(todayPersonalSpend),
             Icons.today,
             valueColor: usedMoneyColor),
         _buildSummaryCard(
             context,
             'This Month',
-            '₹${currentMonthPersonalSpend.toStringAsFixed(2)}',
+            ResponsiveUtils.formatAmountWithK(currentMonthPersonalSpend),
             Icons.calendar_month,
             valueColor: usedMoneyColor),
       ],
@@ -2321,7 +3863,7 @@ class SharedExpensesSummary extends StatelessWidget {
                         },
                         title: Text('${user?.username ?? 'Unknown'}'),
                         trailing: Text(
-                          '₹${entry.value.abs().toStringAsFixed(2)}',
+                          ResponsiveUtils.formatAmountWithK(entry.value.abs()),
                           style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                 color: Colors.green.shade700, // Professional green
                                 fontWeight: FontWeight.bold,
@@ -2345,7 +3887,7 @@ class SharedExpensesSummary extends StatelessWidget {
                               ?.copyWith(fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          '₹${totalOwedToMe.toStringAsFixed(2)}',
+                          ResponsiveUtils.formatAmountWithK(totalOwedToMe),
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                 color: Colors.green.shade700, // Professional green
                                 fontWeight: FontWeight.bold,
@@ -2384,7 +3926,7 @@ class SharedExpensesSummary extends StatelessWidget {
                         },
                         title: Text('${user?.username ?? 'Unknown'}'),
                         trailing: Text(
-                          '₹${entry.value.abs().toStringAsFixed(2)}',
+                          ResponsiveUtils.formatAmountWithK(entry.value.abs()),
                           style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                 color: Theme.of(context)
                                     .colorScheme
@@ -2412,7 +3954,7 @@ class SharedExpensesSummary extends StatelessWidget {
                               ?.copyWith(fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          '₹${totalIOwe.toStringAsFixed(2)}',
+                          ResponsiveUtils.formatAmountWithK(totalIOwe),
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                 color: Theme.of(context)
                                     .colorScheme
@@ -2686,7 +4228,7 @@ class MonthlySpendTrendChart extends StatelessWidget {
                       getTooltipItem: (BarChartGroupData group, int groupIndex,
                           BarChartRodData rod, int rodIndex) {
                         return BarTooltipItem(
-                          '₹${rod.toY.toStringAsFixed(2)}',
+                          ResponsiveUtils.formatAmountWithK(rod.toY),
                           TextStyle(
                             color: Theme.of(context).colorScheme.onPrimary,
                             fontWeight: FontWeight.bold,
@@ -2748,6 +4290,46 @@ class RecentExpensesList extends StatelessWidget {
     recentExpenses.sort(
         (Expense a, Expense b) => b.date.compareTo(a.date)); // Sort by date descending
 
+    // Show empty state if no expenses
+    if (recentExpenses.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              Icons.receipt_long_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No expense added yet',
+              style: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Add your first expense to get started',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       children: recentExpenses.take(5).map<Widget>((Expense expense) {
         return ExpenseListItem(expense: expense);
@@ -2763,8 +4345,35 @@ class ExpenseListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Get current user ID to calculate personal share
+    final AuthManager authManager = Provider.of<AuthManager>(context, listen: false);
+    final String currentUserId = authManager.currentUser?.id ?? 'unknown_user';
+    
+    // Calculate user's personal share and amount owed to them
+    double personalShare;
+    double amountOwedToMe = 0.0;
+    bool isOwedToMe = false;
+    
+    if (expense.splitDetails.isEmpty) {
+      // No split details - if user paid, they bear full cost
+      personalShare = expense.payerId == currentUserId ? expense.amount : 0.0;
+    } else {
+      // Has split details - find user's share
+      final userSplit = expense.splitDetails.firstWhere(
+        (split) => split.userId == currentUserId,
+        orElse: () => SplitShare(userId: currentUserId, amount: 0.0),
+      );
+      personalShare = userSplit.amount;
+      
+      // If user paid but their share is 0 or less than total, calculate how much others owe them
+      if (expense.payerId == currentUserId) {
+        amountOwedToMe = expense.amount - personalShare;
+        isOwedToMe = amountOwedToMe > 0;
+      }
+    }
+    
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
@@ -2847,58 +4456,66 @@ class ExpenseListItem extends StatelessWidget {
               );
             },
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
                   Container(
-                    width: 48,
-                    height: 48,
+                    width: 40,
+                    height: 40,
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
                       expense.category.icon,
                       color: Theme.of(context).colorScheme.primary,
-                      size: 24,
+                      size: 20,
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 12),
                   Expanded(
+                    flex: 2,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           expense.title,
                           style: GoogleFonts.inter(
-                            fontSize: 16,
+                            fontSize: 15,
                             fontWeight: FontWeight.w500,
                             color: Theme.of(context).colorScheme.onSurface,
                           ),
                           overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Row(
                           children: [
-                            Text(
-                              expense.category.displayName,
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            Flexible(
+                              child: Text(
+                                expense.category.displayName,
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             Text(
                               ' • ',
                               style: GoogleFonts.inter(
-                                fontSize: 14,
+                                fontSize: 13,
                                 color: Theme.of(context).colorScheme.onSurfaceVariant,
                               ),
                             ),
-                            Text(
-                              DateFormat('MMM d, yyyy').format(expense.date),
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            Flexible(
+                              child: Text(
+                                DateFormat('MMM d, yyyy').format(expense.date),
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
@@ -2906,36 +4523,41 @@ class ExpenseListItem extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? const Color(0xFFF87171).withOpacity(0.2) // Lighter background in dark theme
-                              : const Color(0xFFFF6B6B).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '-₹${expense.amount.toStringAsFixed(2)}',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Theme.of(context).brightness == Brightness.dark
-                                ? const Color(0xFFF87171) // Brighter red in dark theme
-                                : const Color(0xFFFF6B6B),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: isOwedToMe
+                                ? (Theme.of(context).brightness == Brightness.dark
+                                    ? const Color(0xFF10B981).withOpacity(0.2)
+                                    : const Color(0xFF10B981).withOpacity(0.1))
+                                : (Theme.of(context).brightness == Brightness.dark
+                                    ? const Color(0xFFF87171).withOpacity(0.2)
+                                    : const Color(0xFFFF6B6B).withOpacity(0.1)),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            isOwedToMe
+                                ? '+${ResponsiveUtils.formatAmountWithK(amountOwedToMe)}'
+                                : '-${ResponsiveUtils.formatAmountWithK(personalShare)}',
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: isOwedToMe
+                                  ? const Color(0xFF10B981) // Green for money owed to you
+                                  : (Theme.of(context).brightness == Brightness.dark
+                                      ? const Color(0xFFF87171)
+                                      : const Color(0xFFFF6B6B)), // Red for your expenses
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Icon(
-                        Icons.chevron_right,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        size: 16,
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -2956,6 +4578,725 @@ enum _SplitOption {
   friendPaidEvenly, // "Friend paid, split equally."
   friendIsOwedFullAmount, // "Friend is owed the full amount." (Friend paid, but their share is 0, others split the full amount)
   manualSplit, // "Split Unequally" - This option allows user to select payer and manually enter shares
+}
+
+// --- Add Placeholder Screen ---
+
+class AddPlaceholderScreen extends StatelessWidget {
+  const AddPlaceholderScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Icon(
+                  Icons.add_circle_outline,
+                  size: 40,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Add Options',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// --- Calendar Screen ---
+
+class CalendarScreen extends StatefulWidget {
+  const CalendarScreen({super.key});
+
+  @override
+  State<CalendarScreen> createState() => _CalendarScreenState();
+}
+
+class _CalendarScreenState extends State<CalendarScreen> {
+  DateTime _focusedDay = DateTime.now();
+  DateTime _selectedDay = DateTime.now();
+  bool _isWeeklyView = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Consumer<ExpenseManager>(
+          builder: (context, expenseManager, child) {
+            final AuthManager authManager = Provider.of<AuthManager>(context, listen: false);
+            final String currentUserId = authManager.currentUser?.id ?? 'unknown_user';
+            
+            return Column(
+              children: [
+                // Header with view toggle
+                Container(
+                  padding: ResponsiveUtils.getResponsiveScreenPadding(context),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Expense Calendar',
+                        style: GoogleFonts.inter(
+                          fontSize: ResponsiveUtils.getResponsiveFontSize(context, small: 20, normal: 24),
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      SizedBox(height: ResponsiveUtils.getResponsiveSpacing(context)),
+                      // View toggle buttons below the title
+                      Center(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _buildViewToggle('Monthly', !_isWeeklyView),
+                              _buildViewToggle('Weekly', _isWeeklyView),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Calendar
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: ResponsiveUtils.getResponsiveScreenPadding(context),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 20,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: TableCalendar<Expense>(
+                        firstDay: DateTime.utc(2020, 1, 1),
+                        lastDay: DateTime.utc(2030, 12, 31),
+                        focusedDay: _focusedDay,
+                        selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+                        calendarFormat: _isWeeklyView ? CalendarFormat.week : CalendarFormat.month,
+                        startingDayOfWeek: StartingDayOfWeek.monday,
+                        
+                        // Styling
+                        headerStyle: HeaderStyle(
+                          formatButtonVisible: false,
+                          titleCentered: true,
+                          leftChevronIcon: Icon(
+                            Icons.chevron_left,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          rightChevronIcon: Icon(
+                            Icons.chevron_right,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          titleTextStyle: GoogleFonts.inter(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          headerPadding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        
+                        daysOfWeekStyle: DaysOfWeekStyle(
+                          weekdayStyle: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                          weekendStyle: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        
+                        calendarStyle: CalendarStyle(
+                          outsideDaysVisible: false,
+                          cellMargin: const EdgeInsets.all(2),
+                          cellPadding: const EdgeInsets.all(0),
+                          defaultDecoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          selectedDecoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          todayDecoration: BoxDecoration(
+                            color: const Color(0xFF6366F1),
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF6366F1).withOpacity(0.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          weekendDecoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        
+                        onDaySelected: (selectedDay, focusedDay) {
+                          setState(() {
+                            _selectedDay = selectedDay;
+                            _focusedDay = focusedDay;
+                          });
+                          _showDayExpenses(context, selectedDay, expenseManager, currentUserId);
+                        },
+                        
+                        onPageChanged: (focusedDay) {
+                          setState(() {
+                            _focusedDay = focusedDay;
+                          });
+                        },
+                        
+                        calendarBuilders: CalendarBuilders(
+                          defaultBuilder: (context, day, focusedDay) {
+                            return _buildCalendarDay(context, day, expenseManager, currentUserId);
+                          },
+                          selectedBuilder: (context, day, focusedDay) {
+                            return _buildCalendarDay(context, day, expenseManager, currentUserId, isSelected: true);
+                          },
+                          todayBuilder: (context, day, focusedDay) {
+                            return _buildCalendarDay(context, day, expenseManager, currentUserId, isToday: true);
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildViewToggle(String text, bool isSelected) {
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _isWeeklyView = text == 'Weekly';
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected 
+              ? Theme.of(context).colorScheme.primary 
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: isSelected ? [
+            BoxShadow(
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ] : null,
+        ),
+        child: Text(
+          text,
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: isSelected 
+                ? Colors.white 
+                : Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalendarDay(BuildContext context, DateTime day, ExpenseManager expenseManager, String currentUserId, {bool isSelected = false, bool isToday = false}) {
+    // Get expenses for this day
+    final dayExpenses = expenseManager.expenses.where((expense) {
+      return isSameDay(expense.date, day) && 
+             (expense.payerId == currentUserId || expense.splitDetails.any((s) => s.userId == currentUserId));
+    }).toList();
+    
+    // Calculate total expense for the day
+    double totalExpense = 0.0;
+    for (final expense in dayExpenses) {
+      if (expense.payerId == currentUserId) {
+        totalExpense += expense.amount;
+      } else {
+        final userSplit = expense.splitDetails.firstWhere(
+          (s) => s.userId == currentUserId,
+          orElse: () => SplitShare(userId: currentUserId, amount: 0.0),
+        );
+        totalExpense += userSplit.amount;
+      }
+    }
+    
+    // Check if over limit (assuming daily limit of ₹500 for demo)
+    const double dailyLimit = 500.0;
+    final bool isOverLimit = totalExpense > dailyLimit;
+    
+    Color backgroundColor;
+    Color textColor;
+    
+    if (isSelected) {
+      backgroundColor = Theme.of(context).colorScheme.primary;
+      textColor = Colors.white;
+    } else if (isToday) {
+      backgroundColor = const Color(0xFF6366F1); // Modern indigo for today
+      textColor = Colors.white;
+    } else if (isOverLimit) {
+      backgroundColor = const Color(0xFFEF4444); // Modern red for over limit
+      textColor = Colors.white;
+    } else if (totalExpense > 0) {
+      backgroundColor = const Color(0xFF10B981); // Modern emerald for expenses
+      textColor = Colors.white;
+    } else {
+      backgroundColor = Theme.of(context).colorScheme.surface;
+      textColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.7);
+    }
+    
+    return Container(
+      margin: const EdgeInsets.all(2),
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: isSelected ? [
+          BoxShadow(
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ] : (totalExpense > 0 && !isOverLimit) ? [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ] : null,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '${day.day}',
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: isSelected || isToday ? FontWeight.w700 : FontWeight.w600,
+              color: textColor,
+              height: 1.1,
+            ),
+          ),
+          if (totalExpense > 0) ...[
+            const SizedBox(height: 1),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+              decoration: BoxDecoration(
+                color: textColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                totalExpense >= 1000 
+                    ? '₹${(totalExpense / 1000).toStringAsFixed(1)}k'
+                    : '₹${totalExpense.toStringAsFixed(0)}',
+                style: GoogleFonts.inter(
+                  fontSize: 7.5,
+                  fontWeight: FontWeight.w700,
+                  color: textColor,
+                  height: 1.0,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showDayExpenses(BuildContext context, DateTime day, ExpenseManager expenseManager, String currentUserId) {
+    final dayExpenses = expenseManager.expenses.where((expense) {
+      return isSameDay(expense.date, day) && 
+             (expense.payerId == currentUserId || expense.splitDetails.any((s) => s.userId == currentUserId));
+    }).toList();
+    
+    if (dayExpenses.isEmpty) {
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Row(
+              children: [
+                Icon(
+                  Icons.calendar_today_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                  size: 24,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'No Expenses',
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'No expenses recorded for',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    DateFormat('EEEE, MMM dd, yyyy').format(day),
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Start tracking your expenses to see them appear here.',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.primary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: Text(
+                  'OK',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+      return;
+    }
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DayExpensesScreen(
+          date: day,
+          expenses: dayExpenses,
+          currentUserId: currentUserId,
+        ),
+      ),
+    );
+  }
+}
+
+// Helper function
+bool isSameDay(DateTime a, DateTime b) {
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+// Day Expenses Screen
+class DayExpensesScreen extends StatelessWidget {
+  final DateTime date;
+  final List<Expense> expenses;
+  final String currentUserId;
+
+  const DayExpensesScreen({
+    super.key,
+    required this.date,
+    required this.expenses,
+    required this.currentUserId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    double totalExpense = 0.0;
+    for (final expense in expenses) {
+      if (expense.payerId == currentUserId) {
+        totalExpense += expense.amount;
+      } else {
+        final userSplit = expense.splitDetails.firstWhere(
+          (s) => s.userId == currentUserId,
+          orElse: () => SplitShare(userId: currentUserId, amount: 0.0),
+        );
+        totalExpense += userSplit.amount;
+      }
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(DateFormat('MMM dd, yyyy').format(date)),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+      ),
+      body: Column(
+        children: [
+          // Summary header
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Theme.of(context).colorScheme.primaryContainer,
+                  Theme.of(context).colorScheme.primaryContainer.withOpacity(0.7),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  'Total Expenses',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.8),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  ResponsiveUtils.formatAmountWithK(totalExpense),
+                  style: GoogleFonts.inter(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                Text(
+                  '${expenses.length} expense${expenses.length == 1 ? '' : 's'}',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Expenses list
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: expenses.length,
+              itemBuilder: (context, index) {
+                final expense = expenses[index];
+                final bool isPayer = expense.payerId == currentUserId;
+                
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.all(16),
+                    leading: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: _getCategoryColor(expense.category).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        _getCategoryIcon(expense.category),
+                        color: _getCategoryColor(expense.category),
+                        size: 24,
+                      ),
+                    ),
+                    title: Text(
+                      expense.title,
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 4),
+                        Text(
+                          isPayer ? 'You paid' : 'Your share',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                          ),
+                        ),
+                        Text(
+                          DateFormat('hh:mm a').format(expense.date),
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                    trailing: Text(
+                      isPayer 
+                          ? ResponsiveUtils.formatAmountWithK(expense.amount)
+                          : ResponsiveUtils.formatAmountWithK(expense.splitDetails.firstWhere((s) => s.userId == currentUserId, orElse: () => SplitShare(userId: currentUserId, amount: 0.0)).amount),
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFFE53E3E), // Red for all amounts
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getCategoryColor(ExpenseCategory category) {
+    switch (category) {
+      case ExpenseCategory.food:
+        return const Color(0xFF4CAF50);
+      case ExpenseCategory.transportation:
+        return const Color(0xFF2196F3);
+      case ExpenseCategory.housing:
+        return const Color(0xFF9C27B0);
+      case ExpenseCategory.entertainment:
+        return const Color(0xFFFF5722);
+      case ExpenseCategory.utilities:
+        return const Color(0xFF607D8B);
+      case ExpenseCategory.groceries:
+        return const Color(0xFF4CAF50);
+      case ExpenseCategory.shopping:
+        return const Color(0xFFFF9800);
+      case ExpenseCategory.health:
+        return const Color(0xFFE91E63);
+      case ExpenseCategory.education:
+        return const Color(0xFF00BCD4);
+      case ExpenseCategory.travel:
+        return const Color(0xFF795548);
+      case ExpenseCategory.other:
+        return const Color(0xFF795548);
+    }
+  }
+
+  IconData _getCategoryIcon(ExpenseCategory category) {
+    switch (category) {
+      case ExpenseCategory.food:
+        return Icons.restaurant;
+      case ExpenseCategory.transportation:
+        return Icons.directions_car;
+      case ExpenseCategory.housing:
+        return Icons.home;
+      case ExpenseCategory.entertainment:
+        return Icons.movie;
+      case ExpenseCategory.utilities:
+        return Icons.electrical_services;
+      case ExpenseCategory.groceries:
+        return Icons.local_grocery_store;
+      case ExpenseCategory.shopping:
+        return Icons.shopping_bag;
+      case ExpenseCategory.health:
+        return Icons.medical_services;
+      case ExpenseCategory.education:
+        return Icons.school;
+      case ExpenseCategory.travel:
+        return Icons.flight;
+      case ExpenseCategory.other:
+        return Icons.more_horiz;
+    }
+  }
 }
 
 class AddExpenseScreen extends StatefulWidget {
@@ -3202,7 +5543,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     }).toList();
   }
 
-  void _saveExpense() {
+  void _saveExpense() async {
     if (!_formKey.currentState!.validate()) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -3372,28 +5713,189 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         amount, splitDetails, _selectedDate, currentUserId);
 
     if (dailyExceeded || monthlyExceeded) {
-      String limitWarningMessage = '';
-      if (dailyExceeded) {
-        limitWarningMessage += 'Daily limit exceeded! ';
-      }
-      if (monthlyExceeded) {
-        limitWarningMessage += 'Monthly limit exceeded! ';
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(limitWarningMessage.trim()),
-          backgroundColor: Theme.of(context).colorScheme.error,
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(
-            label: 'Dismiss',
-            onPressed: () {
-              ScaffoldMessenger.of(context).hideCurrentSnackBar();
-            },
-            textColor: Theme.of(context).colorScheme.onError,
-          ),
-        ),
-      );
+      // Show alert dialog for limit exceeded
+      await showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.warning_rounded,
+                    color: Colors.red.shade600,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Limit Exceeded!',
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.red.shade700,
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (dailyExceeded)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.orange.shade200,
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.calendar_today,
+                          color: Colors.orange.shade700,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Your daily spending limit of ₹${expenseManager.dailyLimit?.toStringAsFixed(0)} has been exceeded!',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              color: Colors.orange.shade900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (monthlyExceeded)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.red.shade200,
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.calendar_month,
+                          color: Colors.red.shade700,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Your monthly spending limit of ₹${expenseManager.monthlyLimit?.toStringAsFixed(0)} has been exceeded!',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              color: Colors.red.shade900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                Text(
+                  'Do you still want to add this expense?',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop(false); // Cancel
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.grey.shade600,
+                ),
+                child: Text(
+                  'Cancel',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop(true); // Proceed
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade600,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'Add Anyway',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ).then((proceed) {
+        if (proceed != true) {
+          return; // User cancelled, don't add expense
+        }
+        // User chose to proceed, continue with adding expense
+        _proceedWithSavingExpense(
+          expenseManager,
+          title,
+          amount,
+          determinedPayerId,
+          splitDetails,
+        );
+      });
+      return; // Exit early, the dialog will handle the rest
     }
+
+    // No limits exceeded, proceed normally
+    _proceedWithSavingExpense(
+      expenseManager,
+      title,
+      amount,
+      determinedPayerId,
+      splitDetails,
+    );
+  }
+
+  void _proceedWithSavingExpense(
+    ExpenseManager expenseManager,
+    String title,
+    double amount,
+    String? determinedPayerId,
+    List<SplitShare> splitDetails,
+  ) {
 
     String message = '';
     if (widget.expense == null) {
@@ -3447,9 +5949,17 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     final AppUser? currentUser = authManager.currentUser;
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(widget.expense == null ? 'Add New Expense' : 'Edit Expense'),
-        leading: widget.expense != null // Only show back button if editing (pushed)
+        title: Text(
+          widget.expense == null ? 'Add New Expense' : 'Edit Expense',
+          style: GoogleFonts.inter(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: widget.expense != null
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () => Navigator.pop(context),
@@ -3457,212 +5967,460 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             : null,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.all(20.0),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              TextFormField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Title',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.description),
+              // Title Field
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                validator: (String? value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a title';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _amountController,
-                decoration: const InputDecoration(
-                  labelText: 'Amount (₹)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.currency_rupee),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                validator: (String? value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter an amount';
-                  }
-                  if (double.tryParse(value) == null || double.parse(value) <= 0) {
-                    return 'Please enter a valid positive amount';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<ExpenseCategory>(
-                value: _selectedCategory,
-                decoration: const InputDecoration(
-                  labelText: 'Category',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.category),
-                ),
-                items: ExpenseCategory.values.map<DropdownMenuItem<ExpenseCategory>>(
-                  (ExpenseCategory category) {
-                    return DropdownMenuItem<ExpenseCategory>(
-                      value: category,
-                      child: Row(
-                        children: <Widget>[
-                          Icon(category.icon, size: 20),
-                          const SizedBox(width: 10),
-                          Text(category.displayName),
-                        ],
+                child: TextFormField(
+                  controller: _titleController,
+                  decoration: InputDecoration(
+                    hintText: 'Title',
+                    hintStyle: GoogleFonts.inter(
+                      color: Colors.grey.shade400,
+                      fontSize: 16,
+                    ),
+                    prefixIcon: Container(
+                      margin: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8E3FF),
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    );
+                      child: const Icon(
+                        Icons.description,
+                        color: Color(0xFF6366F1),
+                        size: 24,
+                      ),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 18,
+                    ),
+                  ),
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  validator: (String? value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter a title';
+                    }
+                    return null;
                   },
-                ).toList(),
-                onChanged: (ExpenseCategory? newValue) {
-                  if (newValue != null) {
-                    setState(() {
-                      _selectedCategory = newValue;
-                    });
-                  }
-                },
+                ),
               ),
               const SizedBox(height: 16),
-              ListTile(
-                title: Text(
-                    'Date: ${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}'),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () => _selectDate(context),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(color: Theme.of(context).colorScheme.outline),
+
+              // Amount Field
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: TextFormField(
+                  controller: _amountController,
+                  decoration: InputDecoration(
+                    hintText: 'Amount',
+                    hintStyle: GoogleFonts.inter(
+                      color: Colors.grey.shade400,
+                      fontSize: 16,
+                    ),
+                    prefixIcon: Container(
+                      margin: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD1FAE5),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.currency_rupee,
+                        color: Color(0xFF10B981),
+                        size: 24,
+                      ),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 18,
+                    ),
+                  ),
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  validator: (String? value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter an amount';
+                    }
+                    if (double.tryParse(value) == null || double.parse(value) <= 0) {
+                      return 'Please enter a valid positive amount';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Category Section
+              Text(
+                'Category',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: DropdownButtonFormField<ExpenseCategory>(
+                  value: _selectedCategory,
+                  decoration: InputDecoration(
+                    hintText: 'Select Category',
+                    prefixIcon: Container(
+                      margin: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDCEEFF),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        _selectedCategory.icon,
+                        color: const Color(0xFF3B82F6),
+                        size: 24,
+                      ),
+                    ),
+                    suffixIcon: const Icon(Icons.keyboard_arrow_down, size: 24),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 18,
+                    ),
+                  ),
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  items: ExpenseCategory.values.map<DropdownMenuItem<ExpenseCategory>>(
+                    (ExpenseCategory category) {
+                      return DropdownMenuItem<ExpenseCategory>(
+                        value: category,
+                        child: Row(
+                          children: <Widget>[
+                            Icon(category.icon, size: 20),
+                            const SizedBox(width: 10),
+                            Text(category.displayName),
+                          ],
+                        ),
+                      );
+                    },
+                  ).toList(),
+                  onChanged: (ExpenseCategory? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _selectedCategory = newValue;
+                      });
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Date Field
+              InkWell(
+                onTap: () => _selectDate(context),
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.calendar_today,
+                          color: Color(0xFFF59E0B),
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Text(
+                        'Date: ${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          color: const Color(0xFF6B7280),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
-              // NEW: Bill Splitting Method section
+
+              // Bill Splitting Method Section
               Text(
                 'Bill Splitting Method',
-                style: Theme.of(context).textTheme.titleLarge,
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
               ),
-              const SizedBox(height: 16),
-              Column(
-                children: _SplitOption.values.map<Widget>((_SplitOption option) {
-                  String title;
-                  switch (option) {
-                    case _SplitOption.iPaidEvenly:
-                      title = 'I Paid - Split Equally';
-                      break;
-                    case _SplitOption.iAmOwedFullAmount:
-                      title = 'I Paid - I am owed full amount (Paid for others)';
-                      break;
-                    case _SplitOption.friendPaidEvenly:
-                      title = 'A Friend Paid - Split Equally';
-                      break;
-                    case _SplitOption.friendIsOwedFullAmount:
-                      title = 'A Friend Paid - Friend is owed full amount (Paid for others)';
-                      break;
-                    case _SplitOption.manualSplit:
-                      title = 'Manual Split (Split Unequally)';
-                      break;
-                  }
+              const SizedBox(height: 12),
+              
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: _SplitOption.values.map<Widget>((_SplitOption option) {
+                    String title;
+                    IconData icon;
+                    Color iconBgColor;
+                    Color iconColor;
+                    
+                    switch (option) {
+                      case _SplitOption.iPaidEvenly:
+                        title = 'I Paid - Split Equally';
+                        icon = Icons.group;
+                        iconBgColor = const Color(0xFFE8E3FF);
+                        iconColor = const Color(0xFF6366F1);
+                        break;
+                      case _SplitOption.iAmOwedFullAmount:
+                        title = 'I Paid - I am owed full amount (Paid for others)';
+                        icon = Icons.account_balance_wallet;
+                        iconBgColor = const Color(0xFFD1FAE5);
+                        iconColor = const Color(0xFF10B981);
+                        break;
+                      case _SplitOption.friendPaidEvenly:
+                        title = 'A Friend Paid - Split Equally';
+                        icon = Icons.group;
+                        iconBgColor = const Color(0xFFDCEEFF);
+                        iconColor = const Color(0xFF3B82F6);
+                        break;
+                      case _SplitOption.friendIsOwedFullAmount:
+                        title = 'A Friend Paid - Friend is owed full amount (Paid for others)';
+                        icon = Icons.receipt_long;
+                        iconBgColor = const Color(0xFFFEF3C7);
+                        iconColor = const Color(0xFFF59E0B);
+                        break;
+                      case _SplitOption.manualSplit:
+                        title = 'Manual Split (Split Unequally)';
+                        icon = Icons.calculate;
+                        iconBgColor = const Color(0xFFFCE7F3);
+                        iconColor = const Color(0xFFEC4899);
+                        break;
+                    }
 
-                  return RadioListTile<_SplitOption>(
-                    title: Text(title),
-                    value: option,
-                    groupValue: _selectedSplitOption,
-                    onChanged: (_SplitOption? value) {
-                      setState(() {
-                        _selectedSplitOption = value;
-                        // Clear manual split amounts if switching away
-                        if (value != _SplitOption.manualSplit) {
-                          _splitAmounts.clear();
-                        }
+                    final bool isLast = option == _SplitOption.values.last;
 
-                        // Determine payer based on selected option
-                        if (value == _SplitOption.iPaidEvenly || value == _SplitOption.iAmOwedFullAmount || value == _SplitOption.manualSplit && _selectedPayerId == null) {
-                          _selectedPayerId = currentUser?.id;
-                          _selectedFriendPayerId = null;
-                        } else if (value == _SplitOption.friendPaidEvenly || value == _SplitOption.friendIsOwedFullAmount) {
-                          _selectedPayerId = _selectedFriendPayerId; // Will be null initially if no friend selected
-                        }
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-              // Validator for _selectedSplitOption
-              Builder(
-                builder: (BuildContext context) {
-                  if (_selectedSplitOption == null) {
-                    return Padding(
-                      padding: const EdgeInsets.only(left: 12.0, top: 8.0),
-                      child: Text(
-                        'Please select a bill splitting method.',
-                        style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
-                      ),
+                    return Column(
+                      children: [
+                        RadioListTile<_SplitOption>(
+                          title: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: iconBgColor,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  icon,
+                                  color: iconColor,
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  title,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          value: option,
+                          groupValue: _selectedSplitOption,
+                          activeColor: const Color(0xFF6366F1),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          onChanged: (_SplitOption? value) {
+                            setState(() {
+                              _selectedSplitOption = value;
+                              if (value != _SplitOption.manualSplit) {
+                                _splitAmounts.clear();
+                              }
+                              if (value == _SplitOption.iPaidEvenly || 
+                                  value == _SplitOption.iAmOwedFullAmount || 
+                                  value == _SplitOption.manualSplit && _selectedPayerId == null) {
+                                _selectedPayerId = currentUser?.id;
+                                _selectedFriendPayerId = null;
+                              } else if (value == _SplitOption.friendPaidEvenly || 
+                                         value == _SplitOption.friendIsOwedFullAmount) {
+                                _selectedPayerId = _selectedFriendPayerId;
+                              }
+                            });
+                          },
+                        ),
+                        if (!isLast)
+                          Divider(
+                            height: 1,
+                            thickness: 1,
+                            indent: 60,
+                            color: Colors.grey.shade200,
+                          ),
+                      ],
                     );
-                  }
-                  return const SizedBox.shrink();
-                },
+                  }).toList(),
+                ),
               ),
+              
+              // Validator for _selectedSplitOption
+              if (_selectedSplitOption == null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 12.0, top: 8.0),
+                  child: Text(
+                    'Please select a bill splitting method.',
+                    style: GoogleFonts.inter(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 16),
 
               // Conditional UI elements based on selected split option
               if (_selectedSplitOption != null) ...<Widget>[
-                // "Which friend paid?" dropdown, only for friend-paid scenarios
+                // "Which friend paid?" dropdown
                 if (_selectedSplitOption == _SplitOption.friendPaidEvenly ||
                     _selectedSplitOption == _SplitOption.friendIsOwedFullAmount) ...<Widget>[
-                  DropdownButtonFormField<String>(
-                    value: _selectedFriendPayerId,
-                    decoration: const InputDecoration(
-                      labelText: 'Which friend paid?',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person),
-                    ),
-                    items: expenseManager.allUsers
-                        .where((AppUser user) => user.id != currentUser?.id)
-                        .map<DropdownMenuItem<String>>(
-                          (AppUser user) {
-                            return DropdownMenuItem<String>(
-                              value: user.id,
-                              child: Text(user.username),
-                            );
-                          },
-                        ).toList(),
-                    onChanged: (String? newValue) {
-                      setState(() {
-                        _selectedFriendPayerId = newValue;
-                        _selectedPayerId = newValue; // Sync with the general payer ID
-                      });
-                    },
-                    validator: (String? value) {
-                      if ((_selectedSplitOption == _SplitOption.friendPaidEvenly || _selectedSplitOption == _SplitOption.friendIsOwedFullAmount) && value == null) {
-                        return 'Please select a friend who paid';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // "Who paid?" dropdown, only for manual split
-                if (_selectedSplitOption == _SplitOption.manualSplit) ...<Widget>[
-                  DropdownButtonFormField<String>(
-                    value: _selectedPayerId,
-                    decoration: const InputDecoration(
-                      labelText: 'Who paid?',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person_outline),
-                    ),
-                    items: <DropdownMenuItem<String>>[
-                      if (currentUser != null) // Always include current user if logged in
-                        DropdownMenuItem<String>(
-                          value: currentUser.id,
-                          child: Text('Me (${currentUser.username})'),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
                         ),
-                      ...expenseManager.allUsers
-                          .where((AppUser user) => currentUser == null || user.id != currentUser.id)
+                      ],
+                    ),
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedFriendPayerId,
+                      decoration: InputDecoration(
+                        hintText: 'Which friend paid?',
+                        hintStyle: GoogleFonts.inter(
+                          color: Colors.grey.shade400,
+                        ),
+                        prefixIcon: Container(
+                          margin: const EdgeInsets.all(12),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDCEEFF),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.person,
+                            color: Color(0xFF3B82F6),
+                            size: 24,
+                          ),
+                        ),
+                        suffixIcon: const Icon(Icons.keyboard_arrow_down),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 18,
+                        ),
+                      ),
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      items: expenseManager.allUsers
+                          .where((AppUser user) => user.id != currentUser?.id)
                           .map<DropdownMenuItem<String>>(
                             (AppUser user) {
                               return DropdownMenuItem<String>(
@@ -3670,196 +6428,457 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                                 child: Text(user.username),
                               );
                             },
-                          ),
-                    ],
-                    onChanged: (String? newValue) {
-                      setState(() {
-                        _selectedPayerId = newValue;
-                      });
-                    },
-                    validator: (String? value) {
-                      if (_selectedSplitOption == _SplitOption.manualSplit && value == null) {
-                        return 'Please select a payer';
-                      }
-                      return null;
-                    },
+                          ).toList(),
+                      onChanged: (String? newValue) {
+                        setState(() {
+                          _selectedFriendPayerId = newValue;
+                          _selectedPayerId = newValue;
+                        });
+                      },
+                      validator: (String? value) {
+                        if ((_selectedSplitOption == _SplitOption.friendPaidEvenly || 
+                             _selectedSplitOption == _SplitOption.friendIsOwedFullAmount) && 
+                            value == null) {
+                          return 'Please select a friend who paid';
+                        }
+                        return null;
+                      },
+                    ),
                   ),
                   const SizedBox(height: 16),
                 ],
 
-                // The problematic `if` / `else if` block
-                if (_selectedSplitOption == _SplitOption.iAmOwedFullAmount || _selectedSplitOption == _SplitOption.friendIsOwedFullAmount)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        'Who owes (splits full amount):',
-                        style: Theme.of(context).textTheme.titleMedium,
+                // "Who paid?" dropdown for manual split
+                if (_selectedSplitOption == _SplitOption.manualSplit) ...<Widget>[
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedPayerId,
+                      decoration: InputDecoration(
+                        hintText: 'Who paid?',
+                        hintStyle: GoogleFonts.inter(
+                          color: Colors.grey.shade400,
+                        ),
+                        prefixIcon: Container(
+                          margin: const EdgeInsets.all(12),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFCE7F3),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.person_outline,
+                            color: Color(0xFFEC4899),
+                            size: 24,
+                          ),
+                        ),
+                        suffixIcon: const Icon(Icons.keyboard_arrow_down),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 18,
+                        ),
                       ),
-                      Wrap(
-                        spacing: 8.0,
-                        children: _selectedSplitUsers.map<Widget>((AppUser user) {
-                          return Chip(
-                            label: Text(user.username),
-                            onDeleted: () {
-                              setState(() {
-                                _selectedSplitUsers.remove(user);
-                                _splitAmounts.remove(user.id);
-                              });
-                            },
-                          );
-                        }).toList(),
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
-                      TextButton.icon(
-                        icon: const Icon(Icons.group_add),
-                        label: const Text('Add person to owe'),
-                        onPressed: () async {
-                          final List<AppUser> availableUsers = _getUsersAvailableToAdd(expenseManager, authManager);
-                           if (availableUsers.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                               SnackBar(content: Text('No more friends to add or you are already splitting with all.')));
-                            return;
-                          }
-                          final AppUser? selectedUser = await showDialog<AppUser>(
-                            context: context,
-                            builder: (BuildContext context) {
-                              return SimpleDialog(
-                                title: const Text('Select a user to owe'),
-                                children: availableUsers
-                                    .map<SimpleDialogOption>((AppUser user) {
-                                  return SimpleDialogOption(
-                                    onPressed: () {
-                                      Navigator.pop(context, user);
-                                    },
-                                    child: Text(user.id == currentUser?.id
-                                        ? 'Me (${user.username})'
-                                        : user.username),
-                                  );
-                                }).toList(),
+                      items: <DropdownMenuItem<String>>[
+                        if (currentUser != null)
+                          DropdownMenuItem<String>(
+                            value: currentUser.id,
+                            child: Text('Me (${currentUser.username})'),
+                          ),
+                        ...expenseManager.allUsers
+                            .where((AppUser user) => currentUser == null || user.id != currentUser.id)
+                            .map<DropdownMenuItem<String>>(
+                              (AppUser user) {
+                                return DropdownMenuItem<String>(
+                                  value: user.id,
+                                  child: Text(user.username),
+                                );
+                              },
+                            ),
+                      ],
+                      onChanged: (String? newValue) {
+                        setState(() {
+                          _selectedPayerId = newValue;
+                        });
+                      },
+                      validator: (String? value) {
+                        if (_selectedSplitOption == _SplitOption.manualSplit && value == null) {
+                          return 'Please select a payer';
+                        }
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Participant selection sections
+                if (_selectedSplitOption == _SplitOption.iAmOwedFullAmount || 
+                    _selectedSplitOption == _SplitOption.friendIsOwedFullAmount)
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Who owes (splits full amount):',
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8.0,
+                          runSpacing: 8.0,
+                          children: _selectedSplitUsers.map<Widget>((AppUser user) {
+                            return Chip(
+                              label: Text(
+                                user.username,
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              backgroundColor: const Color(0xFFE8E3FF),
+                              deleteIcon: const Icon(Icons.close, size: 18),
+                              deleteIconColor: const Color(0xFF6366F1),
+                              onDeleted: () {
+                                setState(() {
+                                  _selectedSplitUsers.remove(user);
+                                  _splitAmounts.remove(user.id);
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.group_add, size: 20),
+                          label: Text(
+                            'Add person to owe',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF6366F1),
+                            side: const BorderSide(color: Color(0xFF6366F1)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                          ),
+                          onPressed: () async {
+                            final List<AppUser> availableUsers = 
+                                _getUsersAvailableToAdd(expenseManager, authManager);
+                            if (availableUsers.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('No more friends to add or you are already splitting with all.'),
+                                ),
                               );
-                            },
-                          );
-                          if (selectedUser != null) {
-                            setState(() {
-                              _selectedSplitUsers.add(selectedUser);
-                              _splitAmounts[selectedUser.id] = 0.0; // Initialize with zero
-                            });
-                          }
-                        },
-                      ),
-                    ],
+                              return;
+                            }
+                            final AppUser? selectedUser = await showDialog<AppUser>(
+                              context: context,
+                              builder: (BuildContext context) {
+                                return SimpleDialog(
+                                  title: Text(
+                                    'Select a user to owe',
+                                    style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  children: availableUsers.map<SimpleDialogOption>((AppUser user) {
+                                    return SimpleDialogOption(
+                                      onPressed: () {
+                                        Navigator.pop(context, user);
+                                      },
+                                      child: Text(
+                                        user.id == currentUser?.id
+                                            ? 'Me (${user.username})'
+                                            : user.username,
+                                        style: GoogleFonts.inter(),
+                                      ),
+                                    );
+                                  }).toList(),
+                                );
+                              },
+                            );
+                            if (selectedUser != null) {
+                              setState(() {
+                                _selectedSplitUsers.add(selectedUser);
+                                _splitAmounts[selectedUser.id] = 0.0;
+                              });
+                            }
+                          },
+                        ),
+                      ],
+                    ),
                   )
-                else // This 'else' correctly covers all other _SplitOption cases where participants split with the payer
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        'Split with (others):',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      Wrap(
-                        spacing: 8.0,
-                        children: _selectedSplitUsers.map<Widget>((AppUser user) {
-                          return Chip(
-                            label: Text(user.username),
-                            onDeleted: () {
-                              setState(() {
-                                _selectedSplitUsers.remove(user);
-                                _splitAmounts.remove(user.id);
-                              });
-                            },
-                          );
-                        }).toList(),
-                      ),
-                      TextButton.icon(
-                        icon: const Icon(Icons.group_add),
-                        label: const Text('Add participant'),
-                        onPressed: () async {
-                          final List<AppUser> availableUsers = _getUsersAvailableToAdd(expenseManager, authManager);
-                           if (availableUsers.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                               SnackBar(content: Text('No more friends to add or you are already splitting with all.')));
-                            return;
-                          }
-                          final AppUser? selectedUser = await showDialog<AppUser>(
-                            context: context,
-                            builder: (BuildContext context) {
-                              return SimpleDialog(
-                                title: const Text('Select a user to split with'),
-                                children: availableUsers
-                                    .map<SimpleDialogOption>((AppUser user) {
-                                  return SimpleDialogOption(
-                                    onPressed: () {
-                                      Navigator.pop(context, user);
-                                    },
-                                    child: Text(user.id == currentUser?.id
-                                        ? 'Me (${user.username})'
-                                        : user.username),
-                                  );
-                                }).toList(),
+                else
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Split with (others):',
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8.0,
+                          runSpacing: 8.0,
+                          children: _selectedSplitUsers.map<Widget>((AppUser user) {
+                            return Chip(
+                              label: Text(
+                                user.username,
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              backgroundColor: const Color(0xFFDCEEFF),
+                              deleteIcon: const Icon(Icons.close, size: 18),
+                              deleteIconColor: const Color(0xFF3B82F6),
+                              onDeleted: () {
+                                setState(() {
+                                  _selectedSplitUsers.remove(user);
+                                  _splitAmounts.remove(user.id);
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.group_add, size: 20),
+                          label: Text(
+                            'Add participant',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF3B82F6),
+                            side: const BorderSide(color: Color(0xFF3B82F6)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                          ),
+                          onPressed: () async {
+                            final List<AppUser> availableUsers = 
+                                _getUsersAvailableToAdd(expenseManager, authManager);
+                            if (availableUsers.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('No more friends to add or you are already splitting with all.'),
+                                ),
                               );
-                            },
-                          );
-                          if (selectedUser != null) {
-                            setState(() {
-                              _selectedSplitUsers.add(selectedUser);
-                              _splitAmounts[selectedUser.id] = 0.0; // Initialize with zero
-                            });
-                          }
-                        },
-                      ),
-                    ],
+                              return;
+                            }
+                            final AppUser? selectedUser = await showDialog<AppUser>(
+                              context: context,
+                              builder: (BuildContext context) {
+                                return SimpleDialog(
+                                  title: Text(
+                                    'Select a user to split with',
+                                    style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  children: availableUsers.map<SimpleDialogOption>((AppUser user) {
+                                    return SimpleDialogOption(
+                                      onPressed: () {
+                                        Navigator.pop(context, user);
+                                      },
+                                      child: Text(
+                                        user.id == currentUser?.id
+                                            ? 'Me (${user.username})'
+                                            : user.username,
+                                        style: GoogleFonts.inter(),
+                                      ),
+                                    );
+                                  }).toList(),
+                                );
+                              },
+                            );
+                            if (selectedUser != null) {
+                              setState(() {
+                                _selectedSplitUsers.add(selectedUser);
+                                _splitAmounts[selectedUser.id] = 0.0;
+                              });
+                            }
+                          },
+                        ),
+                      ],
+                    ),
                   ),
                 const SizedBox(height: 16),
 
                 // Individual Shares (only for manual split)
                 if (_selectedSplitOption == _SplitOption.manualSplit) ...<Widget>[
-                  Text(
-                    'Individual Shares:',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  ..._buildSplitShareRows(context, expenseManager, authManager),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: () {
-                        final double totalAmount =
-                            double.tryParse(_amountController.text) ?? 0.0;
-                        final List<AppUser> allParticipants =
-                            _getAllActiveSplitParticipants(expenseManager, authManager);
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Individual Shares:',
+                              style: GoogleFonts.inter(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                final double totalAmount =
+                                    double.tryParse(_amountController.text) ?? 0.0;
+                                final List<AppUser> allParticipants =
+                                    _getAllActiveSplitParticipants(expenseManager, authManager);
 
-                        if (totalAmount > 0 && allParticipants.isNotEmpty) {
-                          final double evenShare =
-                              totalAmount / allParticipants.length;
-                          setState(() {
-                            for (final AppUser user in allParticipants) {
-                              _splitAmounts[user.id] =
-                                  double.parse(evenShare.toStringAsFixed(2));
-                            }
-                          });
-                        }
-                      },
-                      child: const Text('Fill Evenly'), // Helper for manual split
+                                if (totalAmount > 0 && allParticipants.isNotEmpty) {
+                                  final double evenShare =
+                                      totalAmount / allParticipants.length;
+                                  setState(() {
+                                    for (final AppUser user in allParticipants) {
+                                      _splitAmounts[user.id] =
+                                          double.parse(evenShare.toStringAsFixed(2));
+                                    }
+                                  });
+                                }
+                              },
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF6366F1),
+                              ),
+                              child: Text(
+                                'Fill Evenly',
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        ..._buildSplitShareRows(context, expenseManager, authManager),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 16),
                 ],
               ],
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              
+              // Save Button
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
+                height: 54,
+                child: ElevatedButton(
                   onPressed: _saveExpense,
-                  icon: Icon(widget.expense == null ? Icons.add_task : Icons.save),
-                  label: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12.0),
-                    child: Text(
-                      widget.expense == null ? 'Add Expense' : 'Update Expense',
-                      style: const TextStyle(fontSize: 18),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6366F1),
+                    foregroundColor: Colors.white,
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
                     ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        widget.expense == null ? Icons.add_circle : Icons.check_circle,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        widget.expense == null ? 'Add Expense' : 'Update Expense',
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -3895,7 +6914,7 @@ class SplitDetailScreen extends StatelessWidget {
         }
 
         // Filter relevant expenses where both currentUserId and otherUserId are involved
-        // AND at least one of their shares is still unpaid.
+        // AND there's a DIRECT financial relationship between them (one paid for the other)
         final List<Expense> relevantExpenses =
             expenseManager.expenses.where((Expense expense) {
           final SplitShare? currentUserShare = expense.splitDetails.firstWhereOrNull(
@@ -3905,10 +6924,14 @@ class SplitDetailScreen extends StatelessWidget {
             (SplitShare split) => split.userId == otherUserId,
           );
 
-          // An expense is relevant if both users were part of its split details
-          // AND at least one of their shares is still unpaid.
+          // An expense is relevant ONLY if:
+          // 1. Both users were part of the split details
+          // 2. One of them (current user OR other user) was the payer
+          // 3. At least one of their shares is still unpaid
+          // This ensures we don't show expenses paid by a third party
           return currentUserShare != null &&
               otherUserShare != null &&
+              (expense.payerId == currentUserId || expense.payerId == otherUserId) &&
               (!currentUserShare.paid || !otherUserShare.paid);
         }).toList();
 
@@ -3993,7 +7016,7 @@ class SplitDetailItem extends StatelessWidget {
       if (!otherUserShare.paid) {
         // Other user owes current user
         actionText = '${otherUser?.username ?? 'Unknown'} owes you';
-        amountText = '₹${otherUserShare.amount.toStringAsFixed(2)}';
+        amountText = ResponsiveUtils.formatAmountWithK(otherUserShare.amount);
         amountColor = Colors.green.shade700; // Professional green
         showMarkAsPaid = true;
         markPaidForUserId =
@@ -4008,7 +7031,7 @@ class SplitDetailItem extends StatelessWidget {
       if (!currentUserShare.paid) {
         // Current user owes other user
         actionText = 'You owe ${otherUser?.username ?? 'Unknown'}';
-        amountText = '₹${currentUserShare.amount.toStringAsFixed(2)}';
+        amountText = ResponsiveUtils.formatAmountWithK(currentUserShare.amount);
         amountColor = Theme.of(context)
             .colorScheme
             .error; // Professional red (theme-aware)
@@ -4020,116 +7043,206 @@ class SplitDetailItem extends StatelessWidget {
         return const SizedBox.shrink();
       }
     }
-    // Case 3: A third party paid the expense
-    else if (expense.payerId != null) {
-      final AppUser? payerUser = expenseManager.allUsers
-          .firstWhereOrNull((AppUser u) => u.id == expense.payerId);
-      if (payerUser == null) {
-        return const SizedBox.shrink(); // Payer not found, or invalid payerId
-      }
-
-      if (!currentUserShare.paid) {
-        // Current user owes the third party
-        actionText = 'You owe ${payerUser.username} (for ${expense.title})';
-        amountText = '₹${currentUserShare.amount.toStringAsFixed(2)}';
-        amountColor = Theme.of(context)
-            .colorScheme
-            .error; // Professional red (theme-aware)
-        showMarkAsPaid = true;
-        markPaidForUserId =
-            currentUserId; // Mark current user's share as paid TO PAYER
-      } else if (!otherUserShare.paid) {
-        // Other user owes the third party (displayed for context)
-        actionText =
-            '${otherUser?.username ?? 'Unknown'} owes ${payerUser.username} (for ${expense.title})';
-        amountText = '₹${otherUserShare.amount.toStringAsFixed(2)}';
-        amountColor = Theme.of(context)
-            .colorScheme
-            .onSurfaceVariant; // Neutral color for informational display
-        showMarkAsPaid = false; // Current user cannot mark other user's debt to a third party as paid directly
-      } else {
-        // Both current user's and other user's shares are settled with the third party payer.
-        return const SizedBox.shrink();
-      }
-    } else {
-      // Should not be reached if expense.payerId is always set for split expenses
+    // If neither current user nor other user paid (third party paid), this shouldn't appear here
+    else {
       return const SizedBox.shrink();
     }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              expense.title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+            // Expense Title and Category
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: _getCategoryColor(expense.category).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${expense.category.displayName} - ${DateFormat.yMMMd().format(expense.date)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: <Widget>[
-                Text(
-                  'Total: ₹${expense.amount.toStringAsFixed(2)}',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                  child: Icon(
+                    expense.category.icon,
+                    color: _getCategoryColor(expense.category),
+                    size: 20,
+                  ),
                 ),
-                Text(
-                  'Paid by: ${expense.payerId == currentUserId ? 'You' : expenseManager.allUsers.firstWhereOrNull((AppUser u) => u.id == expense.payerId)?.username ?? 'Unknown'}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            ),
-            const Divider(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: <Widget>[
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    actionText,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        expense.title,
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context).colorScheme.onSurface,
                         ),
-                  ),
-                ),
-                Text(
-                  amountText,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: amountColor,
-                        fontWeight: FontWeight.bold,
                       ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${expense.category.displayName} • ${DateFormat('MMM d, yyyy').format(expense.date)}',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            if (showMarkAsPaid && markPaidForUserId != null) ...<Widget>[
+            
+            const SizedBox(height: 12),
+            
+            // Total and Paid By Info
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Total',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        expense.amount >= 10000
+                            ? ResponsiveUtils.formatAmountWithK(expense.amount)
+                            : '₹${expense.amount.toStringAsFixed(2)}',
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'Paid by',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        expense.payerId == currentUserId 
+                            ? 'You' 
+                            : (expenseManager.allUsers.firstWhereOrNull((AppUser u) => u.id == expense.payerId)?.username ?? 'Unknown'),
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // Your Share / Amount Owed
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: amountColor.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: amountColor.withOpacity(0.2),
+                  width: 1.5,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  Text(
+                    actionText,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  Text(
+                    amountText,
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: amountColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            if (showMarkAsPaid) ...<Widget>[
               const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
+              SizedBox(
+                width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: () {
                     expenseManager.markSplitShareAsPaid(expense.id, markPaidForUserId!);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                          content: Text(
-                              'Split for ${otherUser?.username ?? 'Unknown user'} marked as paid!')),
+                        content: Text('Payment marked as settled!'),
+                        backgroundColor: const Color(0xFF10B981),
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
                     );
                   },
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Mark as Paid'),
+                  icon: const Icon(Icons.check_circle_outline, size: 20),
+                  label: Text(
+                    'Mark as Paid',
+                    style: GoogleFonts.inter(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        Colors.green.shade700, // Professional green for button
-                    foregroundColor: Colors.white, // Ensure good contrast
+                    backgroundColor: const Color(0xFF10B981),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ),
@@ -4138,6 +7251,33 @@ class SplitDetailItem extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Color _getCategoryColor(ExpenseCategory category) {
+    switch (category) {
+      case ExpenseCategory.food:
+        return const Color(0xFF4CAF50);
+      case ExpenseCategory.transportation:
+        return const Color(0xFF2196F3);
+      case ExpenseCategory.housing:
+        return const Color(0xFF9C27B0);
+      case ExpenseCategory.entertainment:
+        return const Color(0xFFFF5722);
+      case ExpenseCategory.utilities:
+        return const Color(0xFF607D8B);
+      case ExpenseCategory.groceries:
+        return const Color(0xFF4CAF50);
+      case ExpenseCategory.shopping:
+        return const Color(0xFFFF9800);
+      case ExpenseCategory.health:
+        return const Color(0xFFE91E63);
+      case ExpenseCategory.education:
+        return const Color(0xFF00BCD4);
+      case ExpenseCategory.travel:
+        return const Color(0xFF795548);
+      case ExpenseCategory.other:
+        return const Color(0xFF795548);
+    }
   }
 }
 
@@ -4238,7 +7378,6 @@ class _OverallLedgerItem extends StatelessWidget {
     final ExpenseManager expenseManager =
         Provider.of<ExpenseManager>(context, listen: false);
 
-    String mainActionText = '';
     String subText = '';
     double relevantAmount = 0.0;
     Color amountColor = Theme.of(context).colorScheme.onSurface;
@@ -4270,7 +7409,6 @@ class _OverallLedgerItem extends StatelessWidget {
           .cast<AppUser>()
           .toList();
 
-      mainActionText = 'You are owed: ₹${relevantAmount.toStringAsFixed(2)}';
       subText = 'from ${owingUsers.map<String>((AppUser u) => u.username).join(', ')}';
       amountColor = Colors.green.shade700;
       showMarkAsPaidButton = true;
@@ -4289,77 +7427,181 @@ class _OverallLedgerItem extends StatelessWidget {
       relevantAmount = currentUserShare.amount;
       userIdsToMarkAsPaid.add(currentUserId);
 
-      mainActionText = 'You owe: ₹${relevantAmount.toStringAsFixed(2)}';
       subText = 'to ${payerUser?.username ?? 'Unknown'}';
       amountColor = Theme.of(context).colorScheme.error;
       showMarkAsPaidButton = true;
     }
 
+    // Get payer user for display
+    final AppUser? payerUser = expenseManager.allUsers
+        .firstWhereOrNull((AppUser u) => u.id == expense.payerId);
+    final String payerName = payerUser?.username ?? 'Unknown';
+
+    // Format the amount text using K format
+    final String formattedAmount = ResponsiveUtils.formatAmountWithK(relevantAmount);
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              expense.title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+            // Header with icon and title
+            Row(
+              children: <Widget>[
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${expense.category.displayName} - ${DateFormat.yMMMd().format(expense.date)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: <Widget>[
-                Text(
-                  'Total expense: ₹${expense.amount.toStringAsFixed(2)}', // Clarify "Total"
-                  style: Theme.of(context).textTheme.bodyMedium,
+                  child: Icon(
+                    expense.category.icon,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 20,
+                  ),
                 ),
-                Text(
-                  'Paid by: ${expense.payerId == currentUserId ? 'You' : expenseManager.allUsers.firstWhereOrNull((AppUser u) => u.id == expense.payerId)?.username ?? 'Unknown'}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            ),
-            const Divider(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: <Widget>[
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
-                        mainActionText,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: amountColor, // Apply color to the main action text
-                            ),
+                        expense.title,
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
                       ),
+                      const SizedBox(height: 2),
                       Text(
-                        subText,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontStyle: FontStyle.italic,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            ),
+                        '${expense.category.displayName} • ${DateFormat('MMM d, yyyy').format(expense.date)}',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            // Total and Paid by section
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Total',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        ResponsiveUtils.formatAmountWithK(expense.amount),
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: <Widget>[
+                      Text(
+                        'Paid by',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        expense.payerId == currentUserId ? 'You' : payerName,
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Amount owed section
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: amountColor.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: amountColor.withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          isOwedToMe ? 'You are owed' : 'You owe $payerName',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        if (isOwedToMe) ...<Widget>[
+                          const SizedBox(height: 2),
+                          Text(
+                            subText,
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontStyle: FontStyle.italic,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Text(
+                    formattedAmount,
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: amountColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
             if (showMarkAsPaidButton) ...<Widget>[
               const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
+              SizedBox(
+                width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: () {
                     for (final String userId in userIdsToMarkAsPaid) {
@@ -4372,11 +7614,22 @@ class _OverallLedgerItem extends StatelessWidget {
                               : 'Your share for this expense marked as paid!')),
                     );
                   },
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Mark as Paid'),
+                  icon: const Icon(Icons.check_circle, size: 20),
+                  label: Text(
+                    'Mark as Paid',
+                    style: GoogleFonts.inter(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade700,
+                    backgroundColor: Colors.green.shade600,
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
                   ),
                 ),
               ),
@@ -4405,7 +7658,7 @@ class SettingsPage extends StatelessWidget {
         elevation: 0,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -4414,38 +7667,56 @@ class SettingsPage extends StatelessWidget {
                 children: <Widget>[
                   // MODIFIED: CircleAvatar to display profile picture from AuthManager
                   CircleAvatar(
-                    radius: 60,
+                    radius: 25,
                     backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                    backgroundImage: authManager.currentUser?.profileImageUrl != null
-                        ? NetworkImage(authManager.currentUser!.profileImageUrl!)
-                        : null,
-                    child: authManager.currentUser?.profileImageUrl == null
-                        ? Icon(
-                            Icons.person,
-                            size: 70,
-                            color: Theme.of(context).colorScheme.onPrimaryContainer,
-                          )
-                        : null,
+                    child: Text(
+                      ProfileUtils.getInitials(authManager.currentUser?.name ?? ''),
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 6),
                   Text(
                     authManager.currentUser?.username ?? 'Guest User',
-                    style: Theme.of(context).textTheme.headlineSmall,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    authManager.currentUser?.email ?? 'guest@example.com',
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 12),
             // --- Account Section ---
             Text(
               'Account',
-              style: Theme.of(context).textTheme.titleLarge,
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
               leading: Icon(Icons.person_outline,
+                  size: 18,
                   color: Theme.of(context).colorScheme.onSurfaceVariant),
-              title: const Text('My Profile'),
+              title: Text('My Profile',
+                style: GoogleFonts.inter(fontSize: 13)),
               onTap: () {
                 Navigator.push(
                   context,
@@ -4455,11 +7726,14 @@ class SettingsPage extends StatelessWidget {
                 );
               },
             ),
-            const Divider(),
+            const Divider(height: 1),
             ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
               leading: Icon(Icons.people_alt_outlined,
+                  size: 18,
                   color: Theme.of(context).colorScheme.onSurfaceVariant),
-              title: const Text('Friends'),
+              title: Text('Friends',
+                style: GoogleFonts.inter(fontSize: 13)),
               onTap: () {
                 Navigator.push(
                   context,
@@ -4469,11 +7743,14 @@ class SettingsPage extends StatelessWidget {
                 );
               },
             ),
-            const Divider(),
+            const Divider(height: 1),
             ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
               leading: Icon(Icons.lock_outline,
+                  size: 18,
                   color: Theme.of(context).colorScheme.onSurfaceVariant),
-              title: const Text('Change Password'),
+              title: Text('Change Password',
+                style: GoogleFonts.inter(fontSize: 13)),
               onTap: () {
                 Navigator.push(
                   context,
@@ -4483,36 +7760,41 @@ class SettingsPage extends StatelessWidget {
                 );
               },
             ),
-            const Divider(),
-            const SizedBox(height: 24),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
             // --- App Preferences Section (merged from old SettingsScreen) ---
             Text(
               'App Preferences', // Changed section title
-              style: Theme.of(context).textTheme.titleLarge,
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(8),
               ),
               child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 leading: Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: Icon(
                     appConfig.themeMode == ThemeMode.dark ? Icons.dark_mode : Icons.light_mode,
+                    size: 16,
                     color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    size: 20,
                   ),
                 ),
                 title: Text(
                   'Theme Mode',
                   style: GoogleFonts.inter(
-                    fontSize: 16,
+                    fontSize: 13,
                     fontWeight: FontWeight.w500,
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
@@ -4520,7 +7802,7 @@ class SettingsPage extends StatelessWidget {
                 subtitle: Text(
                   appConfig.themeMode == ThemeMode.dark ? 'Dark theme enabled' : 'Light theme enabled',
                   style: GoogleFonts.inter(
-                    fontSize: 14,
+                    fontSize: 11,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -4540,17 +7822,21 @@ class SettingsPage extends StatelessWidget {
                 ),
               ),
             ),
-            const Divider(),
+            const Divider(height: 1),
             ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
               leading: Icon(Icons.info_outline,
+                  size: 18,
                   color: Theme.of(context).colorScheme.onSurfaceVariant),
-              title: const Text('About App'),
+              title: Text('About App',
+                style: GoogleFonts.inter(fontSize: 13)),
               onTap: () {
                 showAboutDialog(
                   context: context,
                   applicationName: 'SplitMaster',
                   applicationVersion: '1.0.0',
                   applicationIcon: Icon(Icons.account_balance_wallet,
+                      size: 20,
                       color: Theme.of(context).colorScheme.primary),
                   children: <Widget>[
                     const Text(
@@ -4559,8 +7845,8 @@ class SettingsPage extends StatelessWidget {
                 );
               },
             ),
-            const Divider(),
-            const SizedBox(height: 32),
+            const Divider(height: 1),
+            const SizedBox(height: 18),
             Center(
               child: SizedBox(
                 width: double.infinity,
@@ -4568,10 +7854,10 @@ class SettingsPage extends StatelessWidget {
                   onPressed: () {
                     authManager.logout();
                   },
-                  icon: const Icon(Icons.logout),
+                  icon: const Icon(Icons.logout, size: 16),
                   label: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12.0),
-                    child: Text('Logout', style: TextStyle(fontSize: 18)),
+                    padding: EdgeInsets.symmetric(vertical: 6.0),
+                    child: Text('Logout', style: TextStyle(fontSize: 14)),
                   ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Theme.of(context).colorScheme.error,
@@ -4608,7 +7894,6 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
   late TextEditingController _dobController;
   late DateTime _selectedDob;
   String? _selectedGender;
-  String? _profileImageUrl; // NEW: State variable for profile image URL
 
   @override
   void initState() {
@@ -4626,8 +7911,6 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
     _dobController =
         TextEditingController(text: DateFormat.yMMMd().format(_selectedDob));
     _selectedGender = authManager.currentUser?.gender;
-    _profileImageUrl =
-        authManager.currentUser?.profileImageUrl; // NEW: Initialize from current user
   }
 
   @override
@@ -4673,7 +7956,6 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
       country:
           _countryController.text.trim().isNotEmpty ? _countryController.text.trim() : null,
       gender: _selectedGender,
-      profileImageUrl: _profileImageUrl, // NEW: Pass the updated image URL
     );
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -4698,58 +7980,22 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
     }
   }
 
-  // NEW: Method to handle profile picture upload/removal
-  void _uploadProfilePicture() {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Take Photo (Simulated)'),
-              onTap: () {
-                setState(() {
-                  _profileImageUrl =
-                      'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg';
-                });
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Choose from Gallery (Simulated)'),
-              onTap: () {
-                setState(() {
-                  _profileImageUrl =
-                      'https://www.gstatic.com/flutter-onestack-prototype/genui/example_1.jpg';
-                });
-                Navigator.pop(context);
-              },
-            ),
-            if (_profileImageUrl != null) // Only show remove option if an image exists
-              ListTile(
-                leading: const Icon(Icons.delete),
-                title: const Text('Remove Photo'),
-                onTap: () {
-                  setState(() {
-                    _profileImageUrl = null;
-                  });
-                  Navigator.pop(context);
-                },
-              ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('My Profile'),
+        title: Text(
+          'My Profile',
+          style: GoogleFonts.inter(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF1F2937),
+          ),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Color(0xFF1F2937)),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
@@ -4758,174 +8004,195 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Center(
-                child: Stack(
-                  alignment: Alignment.bottomRight, // Position the camera icon
-                  children: <Widget>[
-                    CircleAvatar(
-                      radius: 60,
-                      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                      // NEW: Display network image if URL is available, otherwise default icon
-                      backgroundImage: _profileImageUrl != null
-                          ? NetworkImage(_profileImageUrl!)
-                          : null,
-                      child: _profileImageUrl == null
-                          ? Icon(
-                              Icons.person,
-                              size: 70,
-                              color: Theme.of(context).colorScheme.onPrimaryContainer,
-                            )
-                          : null,
+              // Profile Header Card
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFFF8FAFC),
+                      Color(0xFFE0E7FF),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFF4F46E5).withOpacity(0.12),
+                    width: 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF4F46E5).withOpacity(0.08),
+                      offset: const Offset(0, 4),
+                      blurRadius: 12,
+                      spreadRadius: 0,
                     ),
-                    // NEW: Camera icon for uploading profile picture
-                    GestureDetector(
-                      onTap: _uploadProfilePicture, // Call the new method
-                      child: CircleAvatar(
-                        radius: 20,
-                        backgroundColor: Theme.of(context).colorScheme.secondary,
-                        child: Icon(
-                          Icons.camera_alt,
-                          size: 20,
-                          color: Theme.of(context).colorScheme.onSecondary,
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF4F46E5).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: const Color(0xFF4F46E5).withOpacity(0.15),
+                          width: 2,
                         ),
+                      ),
+                      child: CircleAvatar(
+                        radius: 50,
+                        backgroundColor: const Color(0xFF4F46E5).withOpacity(0.1),
+                        child: Text(
+                          ProfileUtils.getInitials(_nameController.text),
+                          style: GoogleFonts.inter(
+                            fontSize: 32,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF4F46E5),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Profile Information',
+                      style: GoogleFonts.inter(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Update your personal details below',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: const Color(0xFF6B7280),
                       ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 32),
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Full Name',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person),
-                ),
-                keyboardType: TextInputType.name,
-              ),
+              
+              // Personal Information Section
+              _buildSectionHeader('Personal Information', Icons.person_outline),
               const SizedBox(height: 16),
-              TextFormField(
-                controller: _usernameController,
-                decoration: const InputDecoration(
-                  labelText: 'Username',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person),
+              _buildFormCard([
+                _buildModernTextField(
+                  controller: _nameController,
+                  label: 'Full Name',
+                  icon: Icons.person_outline,
+                  keyboardType: TextInputType.name,
                 ),
-                keyboardType: TextInputType.text,
-                validator: (String? value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a username';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _emailController,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email),
-                ),
-                keyboardType: TextInputType.emailAddress,
-                readOnly: true,
-                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _phoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Phone Number',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.phone),
-                ),
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 16),
-              GestureDetector(
-                onTap: () => _selectDate(context),
-                child: AbsorbPointer(
-                  child: TextFormField(
-                    controller: _dobController,
-                    decoration: const InputDecoration(
-                      labelText: 'Date of Birth',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.calendar_today),
-                      suffixIcon: Icon(Icons.arrow_drop_down),
-                    ),
-                    readOnly: true,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                value: _selectedGender,
-                decoration: const InputDecoration(
-                  labelText: 'Gender',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.wc),
-                ),
-                items: <DropdownMenuItem<String>>[
-                  ...(['Male', 'Female']).map<DropdownMenuItem<String>>((String gender) {
-                    IconData iconData;
-                    if (gender == 'Male') {
-                      iconData = Icons.male;
-                    } else {
-                      iconData = Icons.female;
+                const SizedBox(height: 20),
+                _buildModernTextField(
+                  controller: _usernameController,
+                  label: 'Username',
+                  icon: Icons.alternate_email_outlined,
+                  keyboardType: TextInputType.text,
+                  validator: (String? value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter a username';
                     }
-                    return DropdownMenuItem<String>(
-                      value: gender,
-                      child: Row(
-                        children: <Widget>[
-                          Icon(iconData),
-                          const SizedBox(width: 10),
-                          Text(gender),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ],
-                onChanged: (String? newValue) {
-                  setState(() {
-                    _selectedGender = newValue;
-                  });
-                },
-                isExpanded: true,
-              ),
-              const SizedBox(height: 16),
-              GestureDetector(
-                onTap: _showCountryPicker,
-                child: AbsorbPointer(
-                  child: TextFormField(
-                    controller: _countryController,
-                    decoration: const InputDecoration(
-                      labelText: 'Country',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.public),
-                      suffixIcon: Icon(Icons.arrow_drop_down),
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 20),
+                GestureDetector(
+                  onTap: () => _selectDate(context),
+                  child: AbsorbPointer(
+                    child: _buildModernTextField(
+                      controller: _dobController,
+                      label: 'Date of Birth',
+                      icon: Icons.calendar_today_outlined,
+                      suffixIcon: Icons.arrow_drop_down,
                     ),
-                    keyboardType: TextInputType.text,
-                    readOnly: true,
                   ),
                 ),
-              ),
+                const SizedBox(height: 20),
+                _buildModernDropdown(),
+              ]),
+              
+              const SizedBox(height: 24),
+              
+              // Contact Information Section  
+              _buildSectionHeader('Contact Information', Icons.contact_mail_outlined),
+              const SizedBox(height: 16),
+              _buildFormCard([
+                _buildModernTextField(
+                  controller: _emailController,
+                  label: 'Email',
+                  icon: Icons.email_outlined,
+                  keyboardType: TextInputType.emailAddress,
+                  readOnly: true,
+                ),
+                const SizedBox(height: 20),
+                _buildModernTextField(
+                  controller: _phoneController,
+                  label: 'Phone Number',
+                  icon: Icons.phone_outlined,
+                  keyboardType: TextInputType.phone,
+                ),
+              ]),
+              
+              const SizedBox(height: 24),
+              
+              // Additional Details Section
+              _buildSectionHeader('Additional Details', Icons.info_outline),
+              const SizedBox(height: 16),
+              _buildFormCard([
+                GestureDetector(
+                  onTap: _showCountryPicker,
+                  child: AbsorbPointer(
+                    child: _buildModernTextField(
+                      controller: _countryController,
+                      label: 'Country',
+                      icon: Icons.public_outlined,
+                      suffixIcon: Icons.arrow_drop_down,
+                    ),
+                  ),
+                ),
+              ]),
               const SizedBox(height: 32),
-              SizedBox(
+              Container(
                 width: double.infinity,
+                height: 56,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF4F46E5).withOpacity(0.3),
+                      offset: const Offset(0, 4),
+                      blurRadius: 12,
+                      spreadRadius: 0,
+                    ),
+                  ],
+                ),
                 child: ElevatedButton(
                   onPressed: _saveProfile,
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    foregroundColor: Theme.of(context).brightness == Brightness.light
-                        ? Colors.black
-                        : Theme.of(context).colorScheme.onPrimary,
                   ),
                   child: Text(
                     'Save Profile',
-                    style: Theme.of(context).textTheme.titleMedium,
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
@@ -4935,6 +8202,212 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
       ),
     );
   }
+
+  Widget _buildSectionHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF4F46E5).withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            color: const Color(0xFF4F46E5),
+            size: 18,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: GoogleFonts.inter(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF1F2937),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFormCard(List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFE5E7EB),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            offset: const Offset(0, 2),
+            blurRadius: 8,
+            spreadRadius: 0,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+
+  Widget _buildModernTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    IconData? suffixIcon,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+    bool readOnly = false,
+  }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      validator: validator,
+      readOnly: readOnly,
+      style: GoogleFonts.inter(
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+        color: readOnly ? const Color(0xFF6B7280) : const Color(0xFF1F2937),
+      ),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: const Color(0xFF6B7280),
+        ),
+        prefixIcon: Icon(
+          icon,
+          color: const Color(0xFF4F46E5),
+          size: 20,
+        ),
+        suffixIcon: suffixIcon != null
+            ? Icon(
+                suffixIcon,
+                color: const Color(0xFF6B7280),
+                size: 20,
+              )
+            : null,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: Color(0xFFE5E7EB),
+            width: 1,
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: Color(0xFFE5E7EB),
+            width: 1,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: Color(0xFF4F46E5),
+            width: 2,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: Color(0xFFEF4444),
+            width: 1,
+          ),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(
+            color: Color(0xFFEF4444),
+            width: 2,
+          ),
+        ),
+        filled: true,
+        fillColor: const Color(0xFFF9FAFB),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      ),
+    );
+  }
+
+  Widget _buildModernDropdown() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFE5E7EB),
+          width: 1,
+        ),
+      ),
+      child: DropdownButtonFormField<String>(
+        value: _selectedGender,
+        style: GoogleFonts.inter(
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+          color: const Color(0xFF1F2937),
+        ),
+        decoration: InputDecoration(
+          labelText: 'Gender',
+          labelStyle: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: const Color(0xFF6B7280),
+          ),
+          prefixIcon: const Icon(
+            Icons.wc_outlined,
+            color: Color(0xFF4F46E5),
+            size: 20,
+          ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        ),
+        dropdownColor: Colors.white,
+        icon: const Icon(
+          Icons.keyboard_arrow_down,
+          color: Color(0xFF6B7280),
+        ),
+        items: ['Male', 'Female'].map<DropdownMenuItem<String>>((String gender) {
+          return DropdownMenuItem<String>(
+            value: gender,
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  gender == 'Male' ? Icons.male : Icons.female,
+                  color: const Color(0xFF4F46E5),
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  gender,
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFF1F2937),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+        onChanged: (String? newValue) {
+          setState(() {
+            _selectedGender = newValue;
+          });
+        },
+        isExpanded: true,
+      ),
+    );
+  }
+
+
 }
 
 // NEW: Friends List Screen
@@ -4999,15 +8472,14 @@ class FriendsListScreen extends StatelessWidget {
                   child: ListTile(
                     leading: CircleAvatar(
                       backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                      backgroundImage: friend.profileImageUrl != null
-                          ? NetworkImage(friend.profileImageUrl!)
-                          : null,
-                      child: friend.profileImageUrl == null
-                          ? Icon(
-                              Icons.person,
-                              color: Theme.of(context).colorScheme.onSecondaryContainer,
-                            )
-                          : null,
+                      child: Text(
+                        ProfileUtils.getInitials(friend.name),
+                        style: GoogleFonts.inter(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSecondaryContainer,
+                        ),
+                      ),
                     ),
                     title: Text(friend.name),
                     subtitle: Text(friend.email),
@@ -5087,7 +8559,6 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       name: friendName,
       username: friendName, // Using name as username for simplicity
       email: friendEmail,
-      profileImageUrl: null, // No profile image for new friends by default
     );
 
     expenseManager.addAppUser(newFriend);
@@ -5469,7 +8940,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     super.dispose();
   }
 
-  void _changePassword() {
+  void _changePassword() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -5496,7 +8967,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       return;
     }
 
-    final String? errorMessage = authManager.changePassword(currentPassword, newPassword);
+    final String? errorMessage = await authManager.changePassword(currentPassword, newPassword);
 
     setState(() {
       _isLoading = false;
@@ -5785,6 +9256,310 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             style: GoogleFonts.inter(
               fontSize: 12,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- All Splits Screen ---
+class AllSplitsScreen extends StatelessWidget {
+  const AllSplitsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'All Splits',
+          style: GoogleFonts.inter(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        elevation: 0,
+        scrolledUnderElevation: 1,
+      ),
+      body: Consumer<ExpenseManager>(
+        builder: (context, expenseManager, child) {
+          final AuthManager authManager = Provider.of<AuthManager>(context, listen: false);
+          final String currentUserId = authManager.currentUser?.id ?? 'unknown_user';
+          final Map<String, double> netOwed = expenseManager.getOwedAmounts(currentUserId);
+          
+          // Get all friends with balances
+          final List<AppUser> allFriends = expenseManager.allUsers
+              .where((AppUser user) => user.id != currentUserId)
+              .where((AppUser user) => (netOwed[user.id] ?? 0.0) != 0.0) // Only show friends with non-zero balances
+              .toList();
+
+          // Sort friends by balance amount (descending - highest amounts first)
+          allFriends.sort((AppUser a, AppUser b) {
+            final double balanceA = (netOwed[a.id] ?? 0.0).abs();
+            final double balanceB = (netOwed[b.id] ?? 0.0).abs();
+            return balanceB.compareTo(balanceA);
+          });
+
+          if (allFriends.isEmpty) {
+            return Center(
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.balance_outlined,
+                      size: 60,
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'All Settled!',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'You have no outstanding balances with your friends.',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Summary Section
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  margin: const EdgeInsets.only(bottom: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE3F2FD), // Very light blue background
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Split Summary',
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF1E3A8A), // Dark blue for better contrast
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildSummaryItem(
+                              context,
+                              'You Owe',
+                              netOwed.values
+                                  .where((amount) => amount < 0)
+                                  .fold(0.0, (sum, amount) => sum + amount.abs()),
+                              const Color(0xFFFF6B6B),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildSummaryItem(
+                              context,
+                              'You Are Owed',
+                              netOwed.values
+                                  .where((amount) => amount > 0)
+                                  .fold(0.0, (sum, amount) => sum + amount),
+                              const Color(0xFF10B981),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Friends List Section
+                Text(
+                  'Outstanding Balances',
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: allFriends.length,
+                  separatorBuilder: (context, index) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final AppUser friend = allFriends[index];
+                    final double balance = netOwed[friend.id] ?? 0.0;
+                    final bool youOwe = balance < 0;
+                    final double absBalance = balance.abs();
+
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(16),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute<Widget>(
+                                builder: (context) => SplitDetailScreen(
+                                  currentUserId: currentUserId,
+                                  otherUserId: friend.id,
+                                ),
+                              ),
+                            );
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                // Friend Avatar
+                                CircleAvatar(
+                                  radius: 24,
+                                  backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                                  child: Text(
+                                    ProfileUtils.getInitials(friend.name),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                
+                                // Friend Details
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        friend.username,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          color: Theme.of(context).colorScheme.onSurface,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            youOwe ? Icons.arrow_upward : Icons.arrow_downward,
+                                            size: 14,
+                                            color: youOwe ? const Color(0xFFFF6B6B) : const Color(0xFF10B981),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            youOwe ? 'You owe' : 'Owes you',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                
+                                // Amount and Arrow
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      ResponsiveUtils.formatAmountWithK(absBalance),
+                                      style: GoogleFonts.inter(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                        color: youOwe ? const Color(0xFFFF6B6B) : const Color(0xFF10B981),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Icon(
+                                      Icons.chevron_right,
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      size: 16,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSummaryItem(BuildContext context, String title, double amount, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.inter(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.8),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            ResponsiveUtils.formatAmountWithK(amount),
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: color,
             ),
           ),
         ],
